@@ -15,8 +15,10 @@ class MapPageState extends State<MapPage> {
   late final WebViewController _controller;
   bool _loaded = false;
 
-  // État SIG
+  /// ID du polygone sélectionné
   String? _selectedPolygonId;
+
+  // ================= INIT =================
 
   @override
   void initState() {
@@ -30,7 +32,7 @@ class MapPageState extends State<MapPage> {
           try {
             final data = jsonDecode(msg.message);
 
-            // --- clic sur polygone ---
+            // -------- clic sur polygone --------
             if (data['type'] == 'tap') {
               final id = data['id'].toString();
               setState(() => _selectedPolygonId = id);
@@ -38,7 +40,7 @@ class MapPageState extends State<MapPage> {
               return;
             }
 
-            // --- création ---
+            // -------- création --------
             if (data['type'] == 'created') {
               final feature =
                   (data['feature'] as Map).cast<String, dynamic>();
@@ -46,7 +48,7 @@ class MapPageState extends State<MapPage> {
               return;
             }
 
-            // --- édition validée ---
+            // -------- édition validée --------
             if (data['type'] == 'edited') {
               final id = data['id'].toString();
               final feature =
@@ -60,7 +62,9 @@ class MapPageState extends State<MapPage> {
               setState(() => _selectedPolygonId = null);
               await _pushGeoJsonToMap();
             }
-          } catch (_) {}
+          } catch (e) {
+            debugPrint("MapChannel error: $e");
+          }
         },
       )
       ..setNavigationDelegate(
@@ -78,7 +82,7 @@ class MapPageState extends State<MapPage> {
     });
   }
 
-  // ---------------- GEOJSON → MAP ----------------
+  // ================= DATA → MAP =================
 
   Future<void> _pushGeoJsonToMap() async {
     final rows = await AppDatabase.instance.getConstructions();
@@ -101,14 +105,18 @@ class MapPageState extends State<MapPage> {
 
           return decoded;
         })
-        .whereType<Map<String, dynamic>>() // filtre les null
+        .whereType<Map<String, dynamic>>() // 🔥 filtre les null
         .toList();
 
-    final fc = {"type": "FeatureCollection", "features": features};
+    final fc = {
+      "type": "FeatureCollection",
+      "features": features,
+    };
+
     await _controller.runJavaScript("setData(${jsonEncode(fc)});");
   }
 
-  // ---------------- FOCUS (liste → carte) ----------------
+  // ================= LISTE → MAP =================
 
   Future<void> focusOn(String id) async {
     if (!_loaded) return;
@@ -117,11 +125,11 @@ class MapPageState extends State<MapPage> {
     );
   }
 
-  // ---------------- RELEVÉ ----------------
+  // ================= RELEVÉ =================
 
   Future<void> _startDraw() async {
     if (!_loaded) return;
-    _selectedPolygonId = null;
+    setState(() => _selectedPolygonId = null);
     await _controller.runJavaScript("startDraw();");
   }
 
@@ -143,8 +151,7 @@ class MapPageState extends State<MapPage> {
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.check_circle, color: Colors.green),
+                leading: const Icon(Icons.check_circle, color: Colors.green),
                 title: const Text("Valider la modification"),
                 onTap: () {
                   Navigator.pop(context);
@@ -152,8 +159,7 @@ class MapPageState extends State<MapPage> {
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.delete, color: Colors.red),
+                leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text("Supprimer"),
                 onTap: () async {
                   Navigator.pop(context);
@@ -165,16 +171,11 @@ class MapPageState extends State<MapPage> {
               ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
-                title: const Text("Modifier les informations"),
+                title: const Text("Informations"),
                 onTap: () {
                   Navigator.pop(context);
                   _openDetailsById(_selectedPolygonId!);
                 },
-              ),
-              ListTile(
-                leading: const Icon(Icons.close),
-                title: const Text("Annuler"),
-                onTap: () => Navigator.pop(context),
               ),
             ],
           ),
@@ -203,7 +204,7 @@ class MapPageState extends State<MapPage> {
     setState(() => _selectedPolygonId = null);
   }
 
-  // ---------------- CREATE ----------------
+  // ================= CREATE =================
 
   Future<void> _openCreateForm(Map<String, dynamic> feature) async {
     final adresseCtrl = TextEditingController();
@@ -212,8 +213,8 @@ class MapPageState extends State<MapPage> {
 
     final ok = await showModalBottomSheet<bool>(
       context: context,
-      showDragHandle: true,
       isScrollControlled: true,
+      showDragHandle: true,
       builder: (_) {
         return _ElegantSheet(
           title: "Nouvelle construction",
@@ -270,7 +271,7 @@ class MapPageState extends State<MapPage> {
     contactCtrl.dispose();
   }
 
-  // ---------------- DETAILS ----------------
+  // ================= DETAILS =================
 
   Future<void> _openDetailsById(String id) async {
     final row = await AppDatabase.instance.getConstructionById(id);
@@ -315,7 +316,7 @@ class MapPageState extends State<MapPage> {
     );
   }
 
-  // ---------------- UI ----------------
+  // ================= UI =================
 
   @override
   Widget build(BuildContext context) {
@@ -345,7 +346,7 @@ class MapPageState extends State<MapPage> {
   }
 }
 
-// ---------------- UI HELPERS ----------------
+// ================= UI HELPER =================
 
 class _ElegantSheet extends StatelessWidget {
   const _ElegantSheet({required this.title, required this.child});
@@ -358,8 +359,8 @@ class _ElegantSheet extends StatelessWidget {
       padding: EdgeInsets.only(
         left: 16,
         right: 16,
-        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
         top: 10,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

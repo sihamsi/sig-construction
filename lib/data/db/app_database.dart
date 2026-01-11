@@ -33,6 +33,8 @@ class AppDatabase {
     );
   }
 
+  // ---------------- TABLES ----------------
+
   Future<void> _createTables(Database db) async {
     await db.execute('''
       CREATE TABLE users(
@@ -53,6 +55,8 @@ class AppDatabase {
       );
     ''');
   }
+
+  // ---------------- SEED ----------------
 
   Future<void> _seed(Database db) async {
     await db.insert('users', {'username': 'admin', 'password': 'admin'});
@@ -104,7 +108,8 @@ class AppDatabase {
     });
   }
 
-  // ---------- AUTH ----------
+  // ---------------- AUTH ----------------
+
   Future<bool> checkLogin(String username, String password) async {
     final db = await database;
     final rows = await db.query(
@@ -116,7 +121,8 @@ class AppDatabase {
     return rows.isNotEmpty;
   }
 
-  // ---------- GET / SEARCH ----------
+  // ---------------- GET / SEARCH ----------------
+
   Future<List<Map<String, Object?>>> getConstructions() async {
     final db = await database;
     return db.query('constructions', orderBy: 'date_releve DESC');
@@ -159,7 +165,8 @@ class AppDatabase {
     );
   }
 
-  // ---------- INSERT ----------
+  // ---------------- INSERT ----------------
+
   Future<void> insertConstruction({
     required String id,
     required String adresse,
@@ -182,7 +189,8 @@ class AppDatabase {
     _tick();
   }
 
-  // ---------- UPDATE ----------
+  // ---------------- UPDATE ATTRIBUTES ----------------
+
   Future<void> updateConstruction({
     required String id,
     required String adresse,
@@ -205,7 +213,28 @@ class AppDatabase {
     _tick();
   }
 
-  // ---------- DELETE ----------
+  // ---------------- UPDATE GEOMETRY (IMPORTANT SIG) ----------------
+
+  Future<void> updateGeometry({
+    required String id,
+    required Map<String, dynamic> geojsonFeature,
+  }) async {
+    final db = await database;
+
+    await db.update(
+      'constructions',
+      {
+        'geometrie_geojson': jsonEncode(geojsonFeature),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    _tick();
+  }
+
+  // ---------------- DELETE ----------------
+
   Future<void> deleteConstruction(String id) async {
     final db = await database;
     await db.delete('constructions', where: 'id = ?', whereArgs: [id]);

@@ -5,64 +5,155 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Leaflet</title>
 
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
   <style>
-    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
   </style>
 </head>
+
 <body>
 <div id="map"></div>
 
 <script>
-  const map = L.map('map').setView([34.02, -6.84], 13);
+  // ---------------- GLOBALS ----------------
+  let map;
+  let geoLayer;
+  let drawnItems;
+  let drawControl;
+  let editingLayer = null;
+
+  // ---------------- MAP INIT ----------------
+  map = L.map('map').setView([34.02, -6.84], 16);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20
   }).addTo(map);
 
-  let geoLayer = null;
+  drawnItems = new L.FeatureGroup();
+  map.addLayer(drawnItems);
 
-  // Style simple par type_construction
+  // ---------------- STYLE ----------------
   function styleFeature(feature) {
     const t = (feature.properties?.type_construction || '').toLowerCase();
-    let color = '#2F3C7E';
-    if (t.includes('commercial')) color = '#00BFA6';
-    if (t.includes('resident')) color = '#FF6B6B';
-    return { color, weight: 2, fillOpacity: 0.25 };
+    let color = '#1e88e5'; // résidentiel
+    if (t.includes('commercial')) color = '#e53935';
+    return { color, weight: 2, fillOpacity: 0.35 };
   }
 
-  // Appelé par Flutter : setData([...features])
+  // ---------------- SET DATA (Flutter → Map) ----------------
   function setData(featureCollection) {
-    try {
-      if (geoLayer) map.removeLayer(geoLayer);
+    if (geoLayer) map.removeLayer(geoLayer);
 
-      geoLayer = L.geoJSON(featureCollection, {
-        style: styleFeature,
-        onEachFeature: (feature, layer) => {
-          layer.on('click', () => {
-            const id = feature.properties?.id;
-            if (window.MapChannel && id) {
-              window.MapChannel.postMessage(JSON.stringify({ type: 'tap', id }));
-            }
-          });
-        }
-      }).addTo(map);
+    geoLayer = L.geoJSON(featureCollection, {
+      style: styleFeature,
+      onEachFeature: (feature, layer) => {
+        layer.on('click', () => {
+          const id = feature.properties?.id;
+          if (window.MapChannel && id) {
+            window.MapChannel.postMessage(JSON.stringify({
+              type: 'tap',
+              id: id
+            }));
+          }
+        });
+      }
+    }).addTo(map);
 
+    if (geoLayer.getLayers().length > 0) {
       map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
-    } catch (e) {
-      console.log('setData error', e);
     }
   }
 
-  // Appelé par Flutter : focusOn(id)
+  // ---------------- FOCUS ----------------
   function focusOn(id) {
     if (!geoLayer) return;
     geoLayer.eachLayer(layer => {
-      const fid = layer.feature?.properties?.id;
-      if (fid === id) {
-        map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+      if (layer.feature?.properties?.id === id) {
+        map.fitBounds(layer.getBounds(), { padding: [40, 40] });
+      }
+    });
+  }
+
+  // ---------------- DRAW ----------------
+  function startDraw() {
+    if (drawControl) map.removeControl(drawControl);
+
+    drawControl = new L.Control.Draw({
+      edit: {
+        featureGroup: drawnItems,
+        edit: false,
+        remove: false
+      },
+      draw: {
+        polygon: true,
+        polyline: false,
+        rectangle: false,
+        circle: false,
+        marker: false,
+        circlemarker: false
+      }
+    });
+
+    map.addControl(drawControl);
+  }
+
+  map.on(L.Draw.Event.CREATED, function (e) {
+    const layer = e.layer;
+    drawnItems.addLayer(layer);
+
+    const feature = layer.toGeoJSON();
+
+    if (window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({
+        type: 'created',
+        feature: feature
+      }));
+    }
+  });
+
+  // ---------------- EDIT ----------------
+  function enableEdit(id) {
+    geoLayer.eachLayer(layer => {
+      if (layer.feature?.properties?.id === id) {
+        editingLayer = layer;
+        layer.editing.enable();
+      }
+    });
+  }
+
+  function saveEdit(id) {
+    if (!editingLayer) return;
+
+    editingLayer.editing.disable();
+    const feature = editingLayer.toGeoJSON();
+
+    if (window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({
+        type: 'edited',
+        id: id,
+        feature: feature
+      }));
+    }
+
+    editingLayer = null;
+  }
+
+  // ---------------- DELETE ----------------
+  function deletePolygon(id) {
+    geoLayer.eachLayer(layer => {
+      if (layer.feature?.properties?.id === id) {
+        geoLayer.removeLayer(layer);
       }
     });
   }

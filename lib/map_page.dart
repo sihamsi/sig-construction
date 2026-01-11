@@ -15,6 +15,9 @@ class MapPageState extends State<MapPage> {
   late final WebViewController _controller;
   bool _loaded = false;
 
+  // État SIG
+  String? _selectedPolygonId;
+
   @override
   void initState() {
     super.initState();
@@ -27,17 +30,35 @@ class MapPageState extends State<MapPage> {
           try {
             final data = jsonDecode(msg.message);
 
+            // --- clic sur polygone ---
             if (data['type'] == 'tap') {
               final id = data['id'].toString();
+              setState(() => _selectedPolygonId = id);
               widget.onTapFeature(id);
-              await _openDetailsById(id);
               return;
             }
 
+            // --- création ---
             if (data['type'] == 'created') {
-              final feature = (data['feature'] as Map).cast<String, dynamic>();
+              final feature =
+                  (data['feature'] as Map).cast<String, dynamic>();
               await _openCreateForm(feature);
               return;
+            }
+
+            // --- édition validée ---
+            if (data['type'] == 'edited') {
+              final id = data['id'].toString();
+              final feature =
+                  (data['feature'] as Map).cast<String, dynamic>();
+
+              await AppDatabase.instance.updateGeometry(
+                id: id,
+                geojsonFeature: feature,
+              );
+
+              setState(() => _selectedPolygonId = null);
+              await _pushGeoJsonToMap();
             }
           } catch (_) {}
         },
@@ -57,54 +78,142 @@ class MapPageState extends State<MapPage> {
     });
   }
 
-  String _newId() {
-    // notion simple (cours) : id basé sur timestamp
-    final ms = DateTime.now().millisecondsSinceEpoch;
-    return "c${ms.toString().substring(ms.toString().length - 7)}";
-  }
+  // ---------------- GEOJSON → MAP ----------------
 
   Future<void> _pushGeoJsonToMap() async {
     final rows = await AppDatabase.instance.getConstructions();
 
-    final features = rows.map((r) {
-      final geo = (r['geometrie_geojson'] ?? '').toString();
-      final decoded = (jsonDecode(geo) as Map)
-          .cast<String, dynamic>(); // Feature
-      decoded['properties'] ??= <String, dynamic>{};
+    final features = rows
+        .map<Map<String, dynamic>?>((r) {
+          final geojsonStr = (r['geometrie_geojson'] ?? '').toString();
+          if (geojsonStr.isEmpty) return null;
 
-      decoded['properties']['id'] = (r['id'] ?? '').toString();
-      decoded['properties']['type_construction'] =
-          (r['type_construction'] ?? '').toString();
-      decoded['properties']['adresse'] = (r['adresse'] ?? '').toString();
-      decoded['properties']['contact'] = (r['contact'] ?? '').toString();
+          final decoded = jsonDecode(geojsonStr) as Map<String, dynamic>;
+          decoded['properties'] ??= {};
 
-      return decoded;
-    }).toList();
+          decoded['properties']['id'] = r['id'].toString();
+          decoded['properties']['type_construction'] =
+              (r['type_construction'] ?? '').toString();
+          decoded['properties']['adresse'] =
+              (r['adresse'] ?? '').toString();
+          decoded['properties']['contact'] =
+              (r['contact'] ?? '').toString();
+
+          return decoded;
+        })
+        .whereType<Map<String, dynamic>>() // filtre les null
+        .toList();
 
     final fc = {"type": "FeatureCollection", "features": features};
     await _controller.runJavaScript("setData(${jsonEncode(fc)});");
   }
 
+  // ---------------- FOCUS (liste → carte) ----------------
+
   Future<void> focusOn(String id) async {
     if (!_loaded) return;
-    await _controller.runJavaScript("focusOn(${jsonEncode(id)});");
+    await _controller.runJavaScript(
+      "focusOn(${jsonEncode(id)});",
+    );
   }
+
+  // ---------------- RELEVÉ ----------------
 
   Future<void> _startDraw() async {
     if (!_loaded) return;
+    _selectedPolygonId = null;
     await _controller.runJavaScript("startDraw();");
   }
 
-  // ----------- CREATE (Form après relevé) -----------
-  Future<void> _openCreateForm(Map<String, dynamic> geojsonFeature) async {
+  void _showReleveMenu() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (_) {
+        return _ElegantSheet(
+          title: "Relevé – Actions",
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text("Modifier la forme"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _enableGeometryEdit();
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.check_circle, color: Colors.green),
+                title: const Text("Valider la modification"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _saveGeometryEdit();
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.delete, color: Colors.red),
+                title: const Text("Supprimer"),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final ok = await _confirmDelete(_selectedPolygonId!);
+                  if (ok == true) {
+                    await _deletePolygon(_selectedPolygonId!);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text("Modifier les informations"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openDetailsById(_selectedPolygonId!);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.close),
+                title: const Text("Annuler"),
+                onTap: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _enableGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
+    await _controller.runJavaScript(
+      "enableEdit(${jsonEncode(_selectedPolygonId)});",
+    );
+  }
+
+  Future<void> _saveGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
+    await _controller.runJavaScript(
+      "saveEdit(${jsonEncode(_selectedPolygonId)});",
+    );
+  }
+
+  Future<void> _deletePolygon(String id) async {
+    await _controller.runJavaScript("deletePolygon(${jsonEncode(id)});");
+    await AppDatabase.instance.deleteConstruction(id);
+    setState(() => _selectedPolygonId = null);
+  }
+
+  // ---------------- CREATE ----------------
+
+  Future<void> _openCreateForm(Map<String, dynamic> feature) async {
     final adresseCtrl = TextEditingController();
     final contactCtrl = TextEditingController();
     String type = "residentiel";
 
     final ok = await showModalBottomSheet<bool>(
       context: context,
-      isScrollControlled: true,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (_) {
         return _ElegantSheet(
           title: "Nouvelle construction",
@@ -112,27 +221,14 @@ class MapPageState extends State<MapPage> {
             children: [
               TextField(
                 controller: adresseCtrl,
-                decoration: const InputDecoration(
-                  labelText: "Adresse",
-                  prefixIcon: Icon(Icons.location_on_outlined),
-                ),
+                decoration: const InputDecoration(labelText: "Adresse"),
               ),
-              const SizedBox(height: 10),
               TextField(
                 controller: contactCtrl,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: "Contact",
-                  prefixIcon: Icon(Icons.phone_outlined),
-                ),
+                decoration: const InputDecoration(labelText: "Contact"),
               ),
-              const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 value: type,
-                decoration: const InputDecoration(
-                  labelText: "Type de construction",
-                  prefixIcon: Icon(Icons.category_outlined),
-                ),
                 items: const [
                   DropdownMenuItem(
                     value: "residentiel",
@@ -146,26 +242,9 @@ class MapPageState extends State<MapPage> {
                 onChanged: (v) => type = v ?? type,
               ),
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text("Annuler"),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () {
-                        if (adresseCtrl.text.trim().isEmpty) return;
-                        Navigator.pop(context, true);
-                      },
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text("Enregistrer"),
-                    ),
-                  ),
-                ],
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Enregistrer"),
               ),
             ],
           ),
@@ -174,38 +253,28 @@ class MapPageState extends State<MapPage> {
     );
 
     if (ok == true) {
-      final id = _newId();
-
-      geojsonFeature['properties'] ??= <String, dynamic>{};
-      geojsonFeature['properties']['id'] = id;
+      final id = DateTime.now().millisecondsSinceEpoch.toString();
+      feature['properties'] ??= {};
+      feature['properties']['id'] = id;
 
       await AppDatabase.instance.insertConstruction(
         id: id,
         adresse: adresseCtrl.text.trim(),
         contact: contactCtrl.text.trim(),
         typeConstruction: type,
-        geojsonFeature: geojsonFeature,
+        geojsonFeature: feature,
       );
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Construction $id enregistrée")));
-      }
     }
 
     adresseCtrl.dispose();
     contactCtrl.dispose();
   }
 
-  // ----------- DETAILS + EDIT + DELETE (tap polygon) -----------
+  // ---------------- DETAILS ----------------
+
   Future<void> _openDetailsById(String id) async {
     final row = await AppDatabase.instance.getConstructionById(id);
-    if (!mounted || row == null) return;
-
-    final adresse = (row['adresse'] ?? '').toString();
-    final contact = (row['contact'] ?? '').toString();
-    final type = (row['type_construction'] ?? '').toString();
+    if (row == null) return;
 
     await showModalBottomSheet(
       context: context,
@@ -216,130 +285,14 @@ class MapPageState extends State<MapPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _InfoLine(
-                icon: Icons.place_outlined,
-                label: "Adresse",
-                value: adresse,
-              ),
-              const SizedBox(height: 8),
-              _InfoLine(
-                icon: Icons.phone_outlined,
-                label: "Contact",
-                value: contact,
-              ),
-              const SizedBox(height: 8),
-              _InfoLine(
-                icon: Icons.category_outlined,
-                label: "Type",
-                value: type,
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        await _openEditDialog(id, adresse, contact, type);
-                      },
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text("Modifier"),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () async {
-                        final ok = await _confirmDelete(id);
-                        if (ok == true) {
-                          await AppDatabase.instance.deleteConstruction(id);
-                          if (mounted) Navigator.pop(context);
-                        }
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                      label: const Text("Supprimer"),
-                    ),
-                  ),
-                ],
-              ),
+              Text("Adresse : ${row['adresse'] ?? '-'}"),
+              Text("Contact : ${row['contact'] ?? '-'}"),
+              Text("Type : ${row['type_construction'] ?? '-'}"),
             ],
           ),
         );
       },
     );
-  }
-
-  Future<void> _openEditDialog(
-    String id,
-    String adresse0,
-    String contact0,
-    String type0,
-  ) async {
-    final adresseCtrl = TextEditingController(text: adresse0);
-    final contactCtrl = TextEditingController(text: contact0);
-    String type = type0.isEmpty ? "residentiel" : type0;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) {
-        return _ElegantSheet(
-          title: "Modifier $id",
-          child: Column(
-            children: [
-              TextField(
-                controller: adresseCtrl,
-                decoration: const InputDecoration(labelText: "Adresse"),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: contactCtrl,
-                decoration: const InputDecoration(labelText: "Contact"),
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                value: type,
-                decoration: const InputDecoration(
-                  labelText: "Type de construction",
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: "residentiel",
-                    child: Text("Résidentiel"),
-                  ),
-                  DropdownMenuItem(
-                    value: "commercial",
-                    child: Text("Commercial"),
-                  ),
-                ],
-                onChanged: (v) => type = v ?? type,
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                height: 46,
-                child: FilledButton(
-                  onPressed: () async {
-                    await AppDatabase.instance.updateConstruction(
-                      id: id,
-                      adresse: adresseCtrl.text.trim(),
-                      contact: contactCtrl.text.trim(),
-                      typeConstruction: type,
-                    );
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  child: const Text("Enregistrer"),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    adresseCtrl.dispose();
-    contactCtrl.dispose();
   }
 
   Future<bool?> _confirmDelete(String id) {
@@ -362,6 +315,8 @@ class MapPageState extends State<MapPage> {
     );
   }
 
+  // ---------------- UI ----------------
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -372,9 +327,17 @@ class MapPageState extends State<MapPage> {
           right: 14,
           bottom: 14,
           child: FloatingActionButton.extended(
-            onPressed: _loaded ? _startDraw : null,
-            icon: const Icon(Icons.edit_location_alt_outlined),
+            icon: const Icon(Icons.edit_location_alt),
             label: const Text("Relevé"),
+            onPressed: !_loaded
+                ? null
+                : () {
+                    if (_selectedPolygonId == null) {
+                      _startDraw();
+                    } else {
+                      _showReleveMenu();
+                    }
+                  },
           ),
         ),
       ],
@@ -382,7 +345,7 @@ class MapPageState extends State<MapPage> {
   }
 }
 
-// -------- UI helpers (style plus sophistiqué sans packages externes) --------
+// ---------------- UI HELPERS ----------------
 
 class _ElegantSheet extends StatelessWidget {
   const _ElegantSheet({required this.title, required this.child});
@@ -395,8 +358,8 @@ class _ElegantSheet extends StatelessWidget {
       padding: EdgeInsets.only(
         left: 16,
         right: 16,
-        top: 10,
         bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+        top: 10,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -405,53 +368,16 @@ class _ElegantSheet extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Text(
               title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(height: 12),
           child,
-          const SizedBox(height: 10),
         ],
       ),
-    );
-  }
-}
-
-class _InfoLine extends StatelessWidget {
-  const _InfoLine({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = value.isEmpty ? "-" : value;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18),
-        const SizedBox(width: 10),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: Theme.of(context).textTheme.bodyMedium,
-              children: [
-                TextSpan(
-                  text: "$label : ",
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                TextSpan(text: text),
-              ],
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

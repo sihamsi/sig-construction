@@ -44,6 +44,7 @@
   let drawnItems;
   let drawHandler = null;
   let editingLayer = null;
+  let selectedLayer = null;
 
   // ---------------- MAP INIT ----------------
   map = L.map('map').setView([34.02, -6.84], 16);
@@ -60,17 +61,46 @@
     const t = (feature.properties?.type_construction || '').toLowerCase();
     let color = '#1e88e5'; // résidentiel
     if (t.includes('commercial')) color = '#e53935';
-    return { color, weight: 2, fillOpacity: 0.35 };
+
+    return {
+      color: color,
+      weight: 2,
+      fillOpacity: 0.35
+    };
+  }
+
+  // ---------------- CLEAR SELECTION ----------------
+  function clearSelection() {
+    if (selectedLayer && geoLayer) {
+      geoLayer.resetStyle(selectedLayer);
+      selectedLayer = null;
+    }
   }
 
   // ---------------- SET DATA (Flutter → Map) ----------------
   function setData(featureCollection) {
-    if (geoLayer) map.removeLayer(geoLayer);
+    clearSelection();
+
+    if (geoLayer) {
+      map.removeLayer(geoLayer);
+    }
 
     geoLayer = L.geoJSON(featureCollection, {
       style: styleFeature,
       onEachFeature: (feature, layer) => {
         layer.on('click', () => {
+
+          // 🔁 reset ancienne sélection
+          clearSelection();
+
+          // ⭐ nouvelle sélection
+          selectedLayer = layer;
+          layer.setStyle({
+            color: '#FFD600',
+            weight: 3,
+            fillOpacity: 0.5
+          });
+
           const id = feature.properties?.id;
           if (window.MapChannel && id) {
             window.MapChannel.postMessage(JSON.stringify({
@@ -87,18 +117,30 @@
     }
   }
 
-  // ---------------- FOCUS ----------------
+  // ---------------- FOCUS (liste → carte) ----------------
   function focusOn(id) {
     if (!geoLayer) return;
+
     geoLayer.eachLayer(layer => {
       if (layer.feature?.properties?.id === id) {
+        clearSelection();
+        selectedLayer = layer;
+
+        layer.setStyle({
+          color: '#FFD600',
+          weight: 3,
+          fillOpacity: 0.5
+        });
+
         map.fitBounds(layer.getBounds(), { padding: [40, 40] });
       }
     });
   }
 
-  // ---------------- DRAW (AJOUT) ----------------
+  // ---------------- DRAW (CAS 1 : AJOUT) ----------------
   function startDraw() {
+    clearSelection();
+
     if (drawHandler) {
       drawHandler.disable();
       drawHandler = null;
@@ -134,7 +176,7 @@
     }
   });
 
-  // ---------------- EDIT (MODIFIER FORME) ----------------
+  // ---------------- EDIT (CAS 2 : MODIFIER FORME) ----------------
   function enableEdit(id) {
     if (!geoLayer) return;
 
@@ -161,6 +203,7 @@
     }
 
     editingLayer = null;
+    clearSelection();
   }
 
   // ---------------- DELETE ----------------
@@ -172,6 +215,8 @@
         geoLayer.removeLayer(layer);
       }
     });
+
+    clearSelection();
   }
 </script>
 </body>

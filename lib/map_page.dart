@@ -32,7 +32,6 @@ class MapPageState extends State<MapPage> {
           try {
             final data = jsonDecode(msg.message);
 
-            // -------- clic sur polygone --------
             if (data['type'] == 'tap') {
               final id = data['id'].toString();
               setState(() => _selectedPolygonId = id);
@@ -40,7 +39,6 @@ class MapPageState extends State<MapPage> {
               return;
             }
 
-            // -------- création --------
             if (data['type'] == 'created') {
               final feature =
                   (data['feature'] as Map).cast<String, dynamic>();
@@ -48,7 +46,6 @@ class MapPageState extends State<MapPage> {
               return;
             }
 
-            // -------- édition validée --------
             if (data['type'] == 'edited') {
               final id = data['id'].toString();
               final feature =
@@ -105,7 +102,7 @@ class MapPageState extends State<MapPage> {
 
           return decoded;
         })
-        .whereType<Map<String, dynamic>>() // 🔥 filtre les null
+        .whereType<Map<String, dynamic>>()
         .toList();
 
     final fc = {
@@ -120,20 +117,12 @@ class MapPageState extends State<MapPage> {
 
   Future<void> focusOn(String id) async {
     if (!_loaded) return;
-    await _controller.runJavaScript(
-      "focusOn(${jsonEncode(id)});",
-    );
+    await _controller.runJavaScript("focusOn(${jsonEncode(id)});");
   }
 
-  // ================= RELEVÉ =================
+  // ================= RELEVÉ MENU =================
 
-  Future<void> _startDraw() async {
-    if (!_loaded) return;
-    setState(() => _selectedPolygonId = null);
-    await _controller.runJavaScript("startDraw();");
-  }
-
-  void _showReleveMenu() {
+  void _openReleveMenu() {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -141,58 +130,77 @@ class MapPageState extends State<MapPage> {
         return _ElegantSheet(
           title: "Relevé – Actions",
           child: Column(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text("Modifier la forme"),
-                onTap: () {
-                  Navigator.pop(context);
-                  _enableGeometryEdit();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.check_circle, color: Colors.green),
-                title: const Text("Valider la modification"),
-                onTap: () {
-                  Navigator.pop(context);
-                  _saveGeometryEdit();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text("Supprimer"),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final ok = await _confirmDelete(_selectedPolygonId!);
-                  if (ok == true) {
-                    await _deletePolygon(_selectedPolygonId!);
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text("Informations"),
-                onTap: () {
-                  Navigator.pop(context);
-                  _openDetailsById(_selectedPolygonId!);
-                },
-              ),
-            ],
+            children: _selectedPolygonId == null
+                ? [
+                    ListTile(
+                      leading: const Icon(Icons.add_location_alt),
+                      title: const Text("Dessiner une construction"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _startDraw();
+                      },
+                    ),
+                  ]
+                : [
+                    ListTile(
+                      leading: const Icon(Icons.edit),
+                      title: const Text("Modifier la forme"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _enableGeometryEdit();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.check_circle,
+                          color: Colors.green),
+                      title: const Text("Valider la modification"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _saveGeometryEdit();
+                      },
+                    ),
+                    ListTile(
+                      leading:
+                          const Icon(Icons.delete, color: Colors.red),
+                      title: const Text("Supprimer"),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        final ok =
+                            await _confirmDelete(_selectedPolygonId!);
+                        if (ok == true) {
+                          await _deletePolygon(_selectedPolygonId!);
+                        }
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.info_outline),
+                      title: const Text("Informations"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _openDetailsById(_selectedPolygonId!);
+                      },
+                    ),
+                  ],
           ),
         );
       },
     );
   }
 
+  // ================= ACTIONS =================
+
+  Future<void> _startDraw() async {
+    setState(() => _selectedPolygonId = null);
+    await _controller.runJavaScript("startDraw();");
+  }
+
   Future<void> _enableGeometryEdit() async {
-    if (_selectedPolygonId == null) return;
     await _controller.runJavaScript(
       "enableEdit(${jsonEncode(_selectedPolygonId)});",
     );
   }
 
   Future<void> _saveGeometryEdit() async {
-    if (_selectedPolygonId == null) return;
     await _controller.runJavaScript(
       "saveEdit(${jsonEncode(_selectedPolygonId)});",
     );
@@ -232,13 +240,9 @@ class MapPageState extends State<MapPage> {
                 value: type,
                 items: const [
                   DropdownMenuItem(
-                    value: "residentiel",
-                    child: Text("Résidentiel"),
-                  ),
+                      value: "residentiel", child: Text("Résidentiel")),
                   DropdownMenuItem(
-                    value: "commercial",
-                    child: Text("Commercial"),
-                  ),
+                      value: "commercial", child: Text("Commercial")),
                 ],
                 onChanged: (v) => type = v ?? type,
               ),
@@ -266,9 +270,6 @@ class MapPageState extends State<MapPage> {
         geojsonFeature: feature,
       );
     }
-
-    adresseCtrl.dispose();
-    contactCtrl.dispose();
   }
 
   // ================= DETAILS =================
@@ -304,13 +305,11 @@ class MapPageState extends State<MapPage> {
         content: Text("Confirmer la suppression de $id"),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Annuler"),
-          ),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("Annuler")),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Supprimer"),
-          ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Supprimer")),
         ],
       ),
     );
@@ -330,15 +329,7 @@ class MapPageState extends State<MapPage> {
           child: FloatingActionButton.extended(
             icon: const Icon(Icons.edit_location_alt),
             label: const Text("Relevé"),
-            onPressed: !_loaded
-                ? null
-                : () {
-                    if (_selectedPolygonId == null) {
-                      _startDraw();
-                    } else {
-                      _showReleveMenu();
-                    }
-                  },
+            onPressed: !_loaded ? null : _openReleveMenu,
           ),
         ),
       ],

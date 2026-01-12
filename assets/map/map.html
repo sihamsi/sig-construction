@@ -26,7 +26,7 @@
       padding: 0;
     }
 
-    /* 🔥 CACHER TOUTE TOOLBAR LEAFLET */
+    /* 🔥 Cacher toutes les toolbars Leaflet */
     .leaflet-draw-toolbar,
     .leaflet-draw-actions {
       display: none !important;
@@ -38,7 +38,7 @@
 <div id="map"></div>
 
 <script>
-  // ---------------- GLOBALS ----------------
+  // ================== GLOBALS ==================
   let map;
   let geoLayer = null;
   let drawnItems;
@@ -46,17 +46,22 @@
   let editingLayer = null;
   let selectedLayer = null;
 
-  // ---------------- MAP INIT ----------------
+  // ================== MAP INIT ==================
   map = L.map('map').setView([34.02, -6.84], 16);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20
-  }).addTo(map);
+  // 🌍 ESRI World Street Map
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 20,
+      attribution: '© Esri'
+    }
+  ).addTo(map);
 
   drawnItems = new L.FeatureGroup();
   map.addLayer(drawnItems);
 
-  // ---------------- STYLE ----------------
+  // ================== STYLE ==================
   function styleFeature(feature) {
     const t = (feature.properties?.type_construction || '').toLowerCase();
     let color = '#1e88e5'; // résidentiel
@@ -69,7 +74,7 @@
     };
   }
 
-  // ---------------- CLEAR SELECTION ----------------
+  // ================== SELECTION ==================
   function clearSelection() {
     if (selectedLayer && geoLayer) {
       geoLayer.resetStyle(selectedLayer);
@@ -77,7 +82,7 @@
     }
   }
 
-  // ---------------- SET DATA (Flutter → Map) ----------------
+  // ================== SET DATA (Flutter → Map) ==================
   function setData(featureCollection) {
     clearSelection();
 
@@ -88,13 +93,12 @@
     geoLayer = L.geoJSON(featureCollection, {
       style: styleFeature,
       onEachFeature: (feature, layer) => {
+
         layer.on('click', () => {
-
-          // 🔁 reset ancienne sélection
+          // ⭐ gérer la sélection
           clearSelection();
-
-          // ⭐ nouvelle sélection
           selectedLayer = layer;
+
           layer.setStyle({
             color: '#FFD600',
             weight: 3,
@@ -109,6 +113,7 @@
             }));
           }
         });
+
       }
     }).addTo(map);
 
@@ -117,7 +122,7 @@
     }
   }
 
-  // ---------------- FOCUS (liste → carte) ----------------
+  // ================== FOCUS (Liste → Carte) ==================
   function focusOn(id) {
     if (!geoLayer) return;
 
@@ -137,7 +142,7 @@
     });
   }
 
-  // ---------------- DRAW (CAS 1 : AJOUT) ----------------
+  // ================== CAS 1 : AJOUT ==================
   function startDraw() {
     clearSelection();
 
@@ -176,7 +181,7 @@
     }
   });
 
-  // ---------------- EDIT (CAS 2 : MODIFIER FORME) ----------------
+  // ================== CAS 2 : MODIFIER FORME ==================
   function enableEdit(id) {
     if (!geoLayer) return;
 
@@ -206,7 +211,7 @@
     clearSelection();
   }
 
-  // ---------------- DELETE ----------------
+  // ================== DELETE ==================
   function deletePolygon(id) {
     if (!geoLayer) return;
 

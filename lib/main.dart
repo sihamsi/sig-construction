@@ -11,9 +11,8 @@ void main() async {
 class SigConstructionApp extends StatelessWidget {
   const SigConstructionApp({super.key});
 
-  // 🎨 Couleurs Bordeaux
-  static const Color primary = Color(0xFF7A1E2D);
-  static const Color secondary = Color(0xFFB23A48);
+  // 🎨 Couleur principale (tu pourras la changer après)
+  static const Color primary = Color(0xFFBBF0CE);
 
   @override
   Widget build(BuildContext context) {
@@ -26,25 +25,20 @@ class SigConstructionApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
           seedColor: primary,
           primary: primary,
-          secondary: secondary,
         ),
 
-        scaffoldBackgroundColor: const Color(0xFFF7F6F8),
+        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
 
         appBarTheme: const AppBarTheme(
           centerTitle: true,
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
           elevation: 0,
         ),
 
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
           elevation: 6,
         ),
 
-        // ✅ CORRECTION ICI (Material 3)
+        // ✅ CORRECTION ICI
         cardTheme: CardThemeData(
           elevation: 6,
           shadowColor: Colors.black12,
@@ -82,7 +76,6 @@ class _LoginPageState extends State<LoginPage> {
   final _userCtrl = TextEditingController(text: "admin");
   final _passCtrl = TextEditingController(text: "admin");
 
-  bool _obscure = true;
   bool _loading = false;
   String? _error;
 
@@ -113,8 +106,6 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
@@ -126,54 +117,28 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [cs.primary, cs.secondary],
-                      ),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: const Icon(Icons.map, color: Colors.white, size: 42),
-                  ),
+                  const Icon(Icons.map, size: 48),
                   const SizedBox(height: 16),
-                  Text(
-                    "SIG Construction",
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
                   const Text(
-                    "Relevé & gestion cartographique",
-                    style: TextStyle(color: Colors.black54),
+                    "SIG Construction",
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 20),
                   TextField(
                     controller: _userCtrl,
                     decoration: const InputDecoration(
                       labelText: "Utilisateur",
-                      prefixIcon: Icon(Icons.person_outline),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _passCtrl,
-                    obscureText: _obscure,
-                    decoration: InputDecoration(
+                    obscureText: true,
+                    decoration: const InputDecoration(
                       labelText: "Mot de passe",
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscure
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
-                        ),
-                        onPressed: () =>
-                            setState(() => _obscure = !_obscure),
-                      ),
                     ),
                   ),
                   if (_error != null) ...[
@@ -202,7 +167,7 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 ////////////////////////////////////////////////////////////////
-/// HOME SHELL (CARTE + LISTE)
+/// HOME
 ////////////////////////////////////////////////////////////////
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});

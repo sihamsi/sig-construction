@@ -15,7 +15,6 @@ class MapPageState extends State<MapPage> {
   late final WebViewController _controller;
   bool _loaded = false;
 
-  /// ID du polygone sélectionné
   String? _selectedPolygonId;
 
   // ================= INIT =================
@@ -28,41 +27,7 @@ class MapPageState extends State<MapPage> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
         'MapChannel',
-        onMessageReceived: (msg) async {
-          try {
-            final data = jsonDecode(msg.message);
-
-            if (data['type'] == 'tap') {
-              final id = data['id'].toString();
-              setState(() => _selectedPolygonId = id);
-              widget.onTapFeature(id);
-              return;
-            }
-
-            if (data['type'] == 'created') {
-              final feature =
-                  (data['feature'] as Map).cast<String, dynamic>();
-              await _openCreateForm(feature);
-              return;
-            }
-
-            if (data['type'] == 'edited') {
-              final id = data['id'].toString();
-              final feature =
-                  (data['feature'] as Map).cast<String, dynamic>();
-
-              await AppDatabase.instance.updateGeometry(
-                id: id,
-                geojsonFeature: feature,
-              );
-
-              setState(() => _selectedPolygonId = null);
-              await _pushGeoJsonToMap();
-            }
-          } catch (e) {
-            debugPrint("MapChannel error: $e");
-          }
-        },
+        onMessageReceived: _onMapMessage,
       )
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -79,6 +44,40 @@ class MapPageState extends State<MapPage> {
     });
   }
 
+  // ================= MAP → FLUTTER =================
+
+  Future<void> _onMapMessage(JavaScriptMessage msg) async {
+    try {
+      final data = jsonDecode(msg.message);
+
+      if (data['type'] == 'tap') {
+        final id = data['id'].toString();
+        setState(() => _selectedPolygonId = id);
+        widget.onTapFeature(id);
+      }
+
+      if (data['type'] == 'created') {
+        final feature = (data['feature'] as Map).cast<String, dynamic>();
+        await _openCreateForm(feature);
+      }
+
+      if (data['type'] == 'edited') {
+        final id = data['id'].toString();
+        final feature = (data['feature'] as Map).cast<String, dynamic>();
+
+        await AppDatabase.instance.updateGeometry(
+          id: id,
+          geojsonFeature: feature,
+        );
+
+        setState(() => _selectedPolygonId = null);
+        await _pushGeoJsonToMap();
+      }
+    } catch (e) {
+      debugPrint("MapChannel error: $e");
+    }
+  }
+
   // ================= DATA → MAP =================
 
   Future<void> _pushGeoJsonToMap() async {
@@ -86,103 +85,125 @@ class MapPageState extends State<MapPage> {
 
     final features = rows
         .map<Map<String, dynamic>?>((r) {
-          final geojsonStr = (r['geometrie_geojson'] ?? '').toString();
-          if (geojsonStr.isEmpty) return null;
+          final geo = (r['geometrie_geojson'] ?? '').toString();
+          if (geo.isEmpty) return null;
 
-          final decoded = jsonDecode(geojsonStr) as Map<String, dynamic>;
-          decoded['properties'] ??= {};
-
-          decoded['properties']['id'] = r['id'].toString();
-          decoded['properties']['type_construction'] =
+          final f = jsonDecode(geo) as Map<String, dynamic>;
+          f['properties'] ??= {};
+          f['properties']['id'] = r['id'].toString();
+          f['properties']['type_construction'] =
               (r['type_construction'] ?? '').toString();
-          decoded['properties']['adresse'] =
-              (r['adresse'] ?? '').toString();
-          decoded['properties']['contact'] =
-              (r['contact'] ?? '').toString();
+          f['properties']['adresse'] = (r['adresse'] ?? '').toString();
+          f['properties']['contact'] = (r['contact'] ?? '').toString();
 
-          return decoded;
+          return f;
         })
         .whereType<Map<String, dynamic>>()
         .toList();
 
-    final fc = {
-      "type": "FeatureCollection",
-      "features": features,
-    };
-
+    final fc = {"type": "FeatureCollection", "features": features};
     await _controller.runJavaScript("setData(${jsonEncode(fc)});");
   }
 
-  // ================= LISTE → MAP =================
+  // ================= ✅ FOCUS (POUR main.dart) =================
 
   Future<void> focusOn(String id) async {
     if (!_loaded) return;
     await _controller.runJavaScript("focusOn(${jsonEncode(id)});");
+    setState(() => _selectedPolygonId = id);
   }
 
-  // ================= RELEVÉ MENU =================
+  // ================= TYPE DE CARTE =================
+
+  void _openMapTypeSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const ListTile(title: Text("Type de carte")),
+          _mapTypeTile("Par défaut", Icons.map, "default"),
+          _mapTypeTile("Satellite", Icons.satellite_alt, "satellite"),
+          _mapTypeTile("Relief", Icons.terrain, "relief"),
+        ],
+      ),
+    );
+  }
+
+  ListTile _mapTypeTile(String title, IconData icon, String type) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      onTap: () {
+        _controller.runJavaScript("setBaseMap('$type');");
+        Navigator.pop(context);
+      },
+    );
+  }
+
+  // ================= RELEVÉ =================
 
   void _openReleveMenu() {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (_) {
-        return _ElegantSheet(
-          title: "Relevé – Actions",
-          child: Column(
-            children: _selectedPolygonId == null
-                ? [
-                    ListTile(
-                      leading: const Icon(Icons.add_location_alt),
-                      title: const Text("Dessiner une construction"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _startDraw();
-                      },
-                    ),
-                  ]
-                : [
-                    ListTile(
-                      leading: const Icon(Icons.edit),
-                      title: const Text("Modifier la forme"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _enableGeometryEdit();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.check_circle,
-                          color: Colors.green),
-                      title: const Text("Valider la modification"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _saveGeometryEdit();
-                      },
-                    ),
-                    ListTile(
-                      leading:
-                          const Icon(Icons.delete, color: Colors.red),
-                      title: const Text("Supprimer"),
-                      onTap: () async {
-                        Navigator.pop(context);
-                        final ok =
-                            await _confirmDelete(_selectedPolygonId!);
-                        if (ok == true) {
-                          await _deletePolygon(_selectedPolygonId!);
-                        }
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: const Text("Informations"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _openDetailsById(_selectedPolygonId!);
-                      },
-                    ),
-                  ],
-          ),
-        );
+      builder: (_) => _ElegantSheet(
+        title: "Relevé – Actions",
+        child: Column(
+          children: _selectedPolygonId == null
+              ? [
+                  ListTile(
+                    leading: const Icon(Icons.add_location_alt),
+                    title: const Text("Dessiner une construction"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _startDraw();
+                    },
+                  ),
+                ]
+              : [
+                  _actionTile(
+                    Icons.edit,
+                    "Modifier la forme",
+                    _enableGeometryEdit,
+                  ),
+                  _actionTile(
+                    Icons.check_circle,
+                    "Valider la modification",
+                    _saveGeometryEdit,
+                    color: Colors.green,
+                  ),
+                  _actionTile(
+                    Icons.delete,
+                    "Supprimer",
+                    () async {
+                      final ok =
+                          await _confirmDelete(_selectedPolygonId!);
+                      if (ok == true) {
+                        await _deletePolygon(_selectedPolygonId!);
+                      }
+                    },
+                    color: Colors.red,
+                  ),
+                ],
+        ),
+      ),
+    );
+  }
+
+  ListTile _actionTile(
+    IconData icon,
+    String title,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(title),
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
       },
     );
   }
@@ -195,19 +216,23 @@ class MapPageState extends State<MapPage> {
   }
 
   Future<void> _enableGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
     await _controller.runJavaScript(
       "enableEdit(${jsonEncode(_selectedPolygonId)});",
     );
   }
 
   Future<void> _saveGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
     await _controller.runJavaScript(
       "saveEdit(${jsonEncode(_selectedPolygonId)});",
     );
   }
 
   Future<void> _deletePolygon(String id) async {
-    await _controller.runJavaScript("deletePolygon(${jsonEncode(id)});");
+    await _controller.runJavaScript(
+      "deletePolygon(${jsonEncode(id)});",
+    );
     await AppDatabase.instance.deleteConstruction(id);
     setState(() => _selectedPolygonId = null);
   }
@@ -223,38 +248,36 @@ class MapPageState extends State<MapPage> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) {
-        return _ElegantSheet(
-          title: "Nouvelle construction",
-          child: Column(
-            children: [
-              TextField(
-                controller: adresseCtrl,
-                decoration: const InputDecoration(labelText: "Adresse"),
-              ),
-              TextField(
-                controller: contactCtrl,
-                decoration: const InputDecoration(labelText: "Contact"),
-              ),
-              DropdownButtonFormField<String>(
-                value: type,
-                items: const [
-                  DropdownMenuItem(
-                      value: "residentiel", child: Text("Résidentiel")),
-                  DropdownMenuItem(
-                      value: "commercial", child: Text("Commercial")),
-                ],
-                onChanged: (v) => type = v ?? type,
-              ),
-              const SizedBox(height: 14),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text("Enregistrer"),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (_) => _ElegantSheet(
+        title: "Nouvelle construction",
+        child: Column(
+          children: [
+            TextField(
+              controller: adresseCtrl,
+              decoration: const InputDecoration(labelText: "Adresse"),
+            ),
+            TextField(
+              controller: contactCtrl,
+              decoration: const InputDecoration(labelText: "Contact"),
+            ),
+            DropdownButtonFormField<String>(
+              value: type,
+              items: const [
+                DropdownMenuItem(
+                    value: "residentiel", child: Text("Résidentiel")),
+                DropdownMenuItem(
+                    value: "commercial", child: Text("Commercial")),
+              ],
+              onChanged: (v) => type = v ?? type,
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Enregistrer"),
+            ),
+          ],
+        ),
+      ),
     );
 
     if (ok == true) {
@@ -272,30 +295,7 @@ class MapPageState extends State<MapPage> {
     }
   }
 
-  // ================= DETAILS =================
-
-  Future<void> _openDetailsById(String id) async {
-    final row = await AppDatabase.instance.getConstructionById(id);
-    if (row == null) return;
-
-    await showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      builder: (_) {
-        return _ElegantSheet(
-          title: "Construction $id",
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text("Adresse : ${row['adresse'] ?? '-'}"),
-              Text("Contact : ${row['contact'] ?? '-'}"),
-              Text("Type : ${row['type_construction'] ?? '-'}"),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  // ================= CONFIRM DELETE =================
 
   Future<bool?> _confirmDelete(String id) {
     return showDialog<bool>(
@@ -305,11 +305,13 @@ class MapPageState extends State<MapPage> {
         content: Text("Confirmer la suppression de $id"),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Annuler")),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Annuler"),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("Supprimer")),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Supprimer"),
+          ),
         ],
       ),
     );
@@ -323,13 +325,27 @@ class MapPageState extends State<MapPage> {
       children: [
         WebViewWidget(controller: _controller),
         if (!_loaded) const Center(child: CircularProgressIndicator()),
+
         Positioned(
-          right: 14,
-          bottom: 14,
-          child: FloatingActionButton.extended(
-            icon: const Icon(Icons.edit_location_alt),
-            label: const Text("Relevé"),
+          top: 16,
+          right: 16,
+          child: FloatingActionButton(
+            heroTag: "layers",
+            mini: true,
+            onPressed: _openMapTypeSheet,
+            child: const Icon(Icons.layers_outlined),
+          ),
+        ),
+
+        Positioned(
+          top: 72,
+          right: 16,
+          child: FloatingActionButton(
+            heroTag: "releve",
+            backgroundColor: const Color(0xFFBBF0CE),
+            foregroundColor: Colors.black,
             onPressed: !_loaded ? null : _openReleveMenu,
+            child: const Icon(Icons.edit_location_alt),
           ),
         ),
       ],

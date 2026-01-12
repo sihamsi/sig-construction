@@ -6,17 +6,11 @@
   <title>Leaflet SIG</title>
 
   <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- Leaflet Draw -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
   <style>
@@ -26,7 +20,6 @@
       padding: 0;
     }
 
-    /* 🔥 cacher toute UI leaflet-draw */
     .leaflet-draw-toolbar,
     .leaflet-draw-actions {
       display: none !important;
@@ -38,43 +31,54 @@
 <div id="map"></div>
 
 <script>
-  // ================= GLOBALS =================
-  let map;
-  let geoLayer = null;
-  let drawnItems;
-  let drawHandler = null;
-  let editingLayer = null;
-  let selectedLayer = null;
+  // ================= MAP =================
+  let map = L.map('map').setView([34.02, -6.84], 16);
 
-  // ================= MAP INIT =================
-  map = L.map('map').setView([34.02, -6.84], 16);
+  // ================= BASE MAPS =================
+  const baseMaps = {
+    default: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 20, attribution: '© Esri' }
+    ),
 
-  // 🌍 ESRI World Street Map
-  L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 20,
-      attribution: '© Esri'
+    satellite: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 20, attribution: '© Esri' }
+    ),
+
+    relief: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 20, attribution: '© Esri' }
+    )
+  };
+
+  let currentBaseMap = baseMaps.default;
+  currentBaseMap.addTo(map);
+
+  // 👉 appelée par Flutter
+  function setBaseMap(type) {
+    if (currentBaseMap) {
+      map.removeLayer(currentBaseMap);
     }
-  ).addTo(map);
 
-  drawnItems = new L.FeatureGroup();
-  map.addLayer(drawnItems);
-
-  // ================= STYLE =================
-  function styleFeature(feature) {
-    const t = (feature.properties?.type_construction || '').toLowerCase();
-    let color = '#7B1E3A'; // bordeaux résidentiel
-    if (t.includes('commercial')) color = '#C62828';
-
-    return {
-      color: color,
-      weight: 2,
-      fillOpacity: 0.35
-    };
+    currentBaseMap = baseMaps[type] || baseMaps.default;
+    currentBaseMap.addTo(map);
   }
 
-  // ================= SELECTION =================
+  // ================= GEOJSON =================
+  let geoLayer = null;
+  let selectedLayer = null;
+  let editingLayer = null;
+  let drawHandler = null;
+
+  function styleFeature(feature) {
+    const t = (feature.properties?.type_construction || '').toLowerCase();
+    let color = '#7A1E2D';
+    if (t.includes('commercial')) color = '#C62828';
+
+    return { color, weight: 2, fillOpacity: 0.35 };
+  }
+
   function clearSelection() {
     if (selectedLayer && geoLayer) {
       geoLayer.resetStyle(selectedLayer);
@@ -82,18 +86,13 @@
     }
   }
 
-  // ================= SET DATA (Flutter → Map) =================
   function setData(featureCollection) {
     clearSelection();
-
-    if (geoLayer) {
-      map.removeLayer(geoLayer);
-    }
+    if (geoLayer) map.removeLayer(geoLayer);
 
     geoLayer = L.geoJSON(featureCollection, {
       style: styleFeature,
       onEachFeature: (feature, layer) => {
-
         layer.on('click', () => {
           clearSelection();
           selectedLayer = layer;
@@ -101,18 +100,14 @@
           layer.setStyle({
             color: '#FFD54F',
             weight: 3,
-            fillOpacity: 0.55
+            fillOpacity: 0.5
           });
 
           const id = feature.properties?.id;
           if (window.MapChannel && id) {
-            window.MapChannel.postMessage(JSON.stringify({
-              type: 'tap',
-              id: id
-            }));
+            window.MapChannel.postMessage(JSON.stringify({ type: 'tap', id }));
           }
         });
-
       }
     }).addTo(map);
 
@@ -121,7 +116,6 @@
     }
   }
 
-  // ================= FOCUS (Liste → Carte) =================
   function focusOn(id) {
     if (!geoLayer) return;
 
@@ -129,61 +123,35 @@
       if (layer.feature?.properties?.id === id) {
         clearSelection();
         selectedLayer = layer;
-
-        layer.setStyle({
-          color: '#FFD54F',
-          weight: 3,
-          fillOpacity: 0.55
-        });
-
+        layer.setStyle({ color: '#FFD54F', weight: 3 });
         map.fitBounds(layer.getBounds(), { padding: [40, 40] });
       }
     });
   }
 
-  // ================= CAS 1 : AJOUT =================
+  // ================= DRAW =================
   function startDraw() {
     clearSelection();
-
-    if (drawHandler) {
-      drawHandler.disable();
-      drawHandler = null;
-    }
+    if (drawHandler) drawHandler.disable();
 
     drawHandler = new L.Draw.Polygon(map, {
-      allowIntersection: false,
-      showArea: true,
-      shapeOptions: {
-        color: '#2E7D32'
-      }
+      shapeOptions: { color: '#2E7D32' }
     });
-
     drawHandler.enable();
   }
 
-  map.on(L.Draw.Event.CREATED, function (e) {
-    const layer = e.layer;
-    drawnItems.addLayer(layer);
-
-    const feature = layer.toGeoJSON();
-
+  map.on(L.Draw.Event.CREATED, e => {
+    const feature = e.layer.toGeoJSON();
     if (window.MapChannel) {
       window.MapChannel.postMessage(JSON.stringify({
         type: 'created',
-        feature: feature
+        feature
       }));
     }
-
-    if (drawHandler) {
-      drawHandler.disable();
-      drawHandler = null;
-    }
+    drawHandler.disable();
   });
 
-  // ================= CAS 2 : MODIFIER FORME =================
   function enableEdit(id) {
-    if (!geoLayer) return;
-
     geoLayer.eachLayer(layer => {
       if (layer.feature?.properties?.id === id) {
         editingLayer = layer;
@@ -194,32 +162,24 @@
 
   function saveEdit(id) {
     if (!editingLayer) return;
-
     editingLayer.editing.disable();
-    const feature = editingLayer.toGeoJSON();
 
-    if (window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({
-        type: 'edited',
-        id: id,
-        feature: feature
-      }));
-    }
+    const feature = editingLayer.toGeoJSON();
+    window.MapChannel.postMessage(JSON.stringify({
+      type: 'edited',
+      id,
+      feature
+    }));
 
     editingLayer = null;
-    clearSelection();
   }
 
-  // ================= DELETE =================
   function deletePolygon(id) {
-    if (!geoLayer) return;
-
     geoLayer.eachLayer(layer => {
       if (layer.feature?.properties?.id === id) {
         geoLayer.removeLayer(layer);
       }
     });
-
     clearSelection();
   }
 </script>

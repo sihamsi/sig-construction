@@ -148,14 +148,18 @@ class _LoginPageState extends State<LoginPage> {
 
     if (!mounted) return;
 
-    if (user != null) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => HomeShell(user: user)),
-      );
-    } else {
-      setState(() => _error = "Identifiants invalides");
+    if (user == null) {
+      setState(() {
+        _error = "Identifiants invalides";
+        _loading = false;
+      });
+      return;
     }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => HomeShell(user: user)),
+    );
 
     setState(() => _loading = false);
   }

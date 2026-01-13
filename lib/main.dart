@@ -76,33 +76,91 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _db = AppDatabase.instance;
 
-  final _userCtrl = TextEditingController();
+  final _firstNameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
 
   bool _loading = false;
   String? _error;
+  String _role = "agent";
 
-  Future<void> _login() async {
+  @override
+  void dispose() {
+    _firstNameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _authenticate() async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
-    final user = await _db.loginUser(
-      _userCtrl.text.trim(),
-      _passCtrl.text.trim(),
-    );
+    final firstName = _firstNameCtrl.text.trim();
+    final lastName = _lastNameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final password = _passCtrl.text.trim();
+    final confirm = _confirmCtrl.text.trim();
+
+    if (firstName.isEmpty ||
+        lastName.isEmpty ||
+        phone.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty ||
+        confirm.isEmpty) {
+      setState(() {
+        _error = "Veuillez remplir tous les champs";
+        _loading = false;
+      });
+      return;
+    }
+
+    if (password != confirm) {
+      setState(() {
+        _error = "Les mots de passe ne correspondent pas";
+        _loading = false;
+      });
+      return;
+    }
+
+    AppUser? user = await _db.getUserByEmail(email);
+    if (user == null) {
+      user = await _db.createUser(
+        firstName: firstName,
+        lastName: lastName,
+        phone: phone,
+        email: email,
+        password: password,
+        role: _role,
+      );
+    } else {
+      user = await _db.loginUser(email, password);
+    }
 
     if (!mounted) return;
 
-    if (user != null) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => HomeShell(user: user)),
-      );
-    } else {
-      setState(() => _error = "Identifiants invalides");
+    if (user == null) {
+      setState(() {
+        _error = "Identifiants invalides";
+        _loading = false;
+      });
+      return;
     }
+
+    final AppUser authenticatedUser = user;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => HomeShell(user: authenticatedUser)),
+    );
 
     setState(() => _loading = false);
   }
@@ -159,29 +217,80 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 20),
                     TextField(
-                      controller: _userCtrl,
+                      controller: _firstNameCtrl,
+                      textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
-                        labelText: "Utilisateur",
+                        labelText: "Nom",
+                        prefixIcon: Icon(Icons.badge_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _lastNameCtrl,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: "Prénom",
                         prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _phoneCtrl,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: "Téléphone",
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: "Email",
+                        prefixIcon: Icon(Icons.email_outlined),
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _passCtrl,
                       obscureText: true,
+                      textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
                         labelText: "Mot de passe",
                         prefixIcon: Icon(Icons.lock_outline),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: const [
-                        Chip(label: Text("Agent")),
-                        Chip(label: Text("Superviseur")),
+                    TextField(
+                      controller: _confirmCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: "Confirmation du mot de passe",
+                        prefixIcon: Icon(Icons.lock_reset_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: _role,
+                      decoration: const InputDecoration(
+                        labelText: "Rôle",
+                        prefixIcon: Icon(Icons.verified_user_outlined),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: "agent",
+                          child: Text("Agent"),
+                        ),
+                        DropdownMenuItem(
+                          value: "supervisor",
+                          child: Text("Superviseur"),
+                        ),
                       ],
+                      onChanged: (value) =>
+                          setState(() => _role = value ?? _role),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
@@ -195,7 +304,7 @@ class _LoginPageState extends State<LoginPage> {
                       width: double.infinity,
                       height: 50,
                       child: FilledButton.icon(
-                        onPressed: _loading ? null : _login,
+                        onPressed: _loading ? null : _authenticate,
                         icon: _loading
                             ? const SizedBox(
                                 width: 20,
@@ -258,7 +367,7 @@ class _HomeShellState extends State<HomeShell> {
                       : "Dashboard",
             ),
             Text(
-              "${user.username} • ${user.isSupervisor ? "Superviseur" : "Agent"}",
+              "${user.fullName} • ${user.isSupervisor ? "Superviseur" : "Agent"}",
               style: Theme.of(context)
                   .textTheme
                   .labelSmall

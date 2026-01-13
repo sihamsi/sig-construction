@@ -18,6 +18,8 @@ class MapPageState extends State<MapPage> {
   bool _loaded = false;
 
   String? _selectedPolygonId;
+  List<AppUser> _agents = [];
+  int? _agentFilterId;
 
   // ================= INIT =================
 
@@ -44,6 +46,16 @@ class MapPageState extends State<MapPage> {
     AppDatabase.instance.refreshTick.addListener(() async {
       if (_loaded) await _pushGeoJsonToMap();
     });
+
+    if (widget.user.isSupervisor) {
+      _loadAgents();
+    }
+  }
+
+  Future<void> _loadAgents() async {
+    final agents = await AppDatabase.instance.getAgents();
+    if (!mounted) return;
+    setState(() => _agents = agents);
   }
 
   // ================= MAP → FLUTTER =================
@@ -83,8 +95,10 @@ class MapPageState extends State<MapPage> {
   // ================= DATA → MAP =================
 
   Future<void> _pushGeoJsonToMap() async {
-    final rows =
-        await AppDatabase.instance.getConstructionsForUser(widget.user);
+    final rows = await AppDatabase.instance.getConstructionsForUser(
+      widget.user,
+      _agentFilterId,
+    );
 
     final features = rows
         .map<Map<String, dynamic>?>((r) {
@@ -302,6 +316,38 @@ class MapPageState extends State<MapPage> {
       children: [
         WebViewWidget(controller: _controller),
         if (!_loaded) const Center(child: CircularProgressIndicator()),
+        if (widget.user.isSupervisor)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: Card(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: DropdownButton<int?>(
+                  value: _agentFilterId,
+                  underline: const SizedBox(),
+                  hint: const Text("Filtrer par agent"),
+                  items: [
+                    const DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text("Tous les agents"),
+                    ),
+                    ..._agents.map(
+                      (agent) => DropdownMenuItem<int?>(
+                        value: agent.id,
+                        child: Text(agent.fullName),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) async {
+                    setState(() => _agentFilterId = value);
+                    if (_loaded) await _pushGeoJsonToMap();
+                  },
+                ),
+              ),
+            ),
+          ),
 
         Positioned(
           top: 16,

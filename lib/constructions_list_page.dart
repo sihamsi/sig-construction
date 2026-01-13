@@ -21,6 +21,22 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
 
   String _qAdresse = "";
   String _qType = "Tous";
+  int? _agentFilterId;
+  List<AppUser> _agents = [];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.user.isSupervisor) {
+      _loadAgents();
+    }
+  }
+
+  Future<void> _loadAgents() async {
+    final agents = await _db.getAgents();
+    if (!mounted) return;
+    setState(() => _agents = agents);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +77,28 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                     onChanged: (v) =>
                         setState(() => _qType = v ?? "Tous"),
                   ),
+                  if (widget.user.isSupervisor) ...[
+                    const SizedBox(width: 10),
+                    DropdownButton<int?>(
+                      value: _agentFilterId,
+                      underline: const SizedBox(),
+                      hint: const Text("Agent"),
+                      items: [
+                        const DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text("Tous"),
+                        ),
+                        ..._agents.map(
+                          (agent) => DropdownMenuItem<int?>(
+                            value: agent.id,
+                            child: Text(agent.fullName),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _agentFilterId = value),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -88,6 +126,7 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                 user: widget.user,
                 adresseQuery: _qAdresse,
                 type: _qType == "Tous" ? null : _qType,
+                agentId: _agentFilterId,
               ),
               builder: (context, snap) {
                 if (snap.connectionState != ConnectionState.done) {
@@ -110,7 +149,23 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                     final type =
                         (r['type_construction'] ?? '').toString();
                     final createdBy =
-                        (r['created_by'] ?? '').toString();
+                        (r['created_by'] as int?) ?? 0;
+                    final agentName = widget.user.isSupervisor
+                        ? _agents
+                            .firstWhere(
+                              (agent) => agent.id == createdBy,
+                              orElse: () => AppUser(
+                                id: 0,
+                                username: createdBy.toString(),
+                                firstName: "",
+                                lastName: "",
+                                phone: "",
+                                email: "",
+                                role: "agent",
+                              ),
+                            )
+                            .fullName
+                        : "";
 
                     return Card(
                       child: ListTile(
@@ -127,8 +182,8 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                               : adresse,
                         ),
                         subtitle: Text(
-                          widget.user.isSupervisor && createdBy.isNotEmpty
-                              ? "ID: $id • Type: $type • Agent: $createdBy"
+                          widget.user.isSupervisor && createdBy != 0
+                              ? "ID: $id • Type: $type • Agent: $agentName"
                               : "ID: $id • Type: $type",
                         ),
                         onTap: () => widget.onOpenInMap(id),

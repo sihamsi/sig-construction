@@ -156,9 +156,10 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
+    final AppUser authenticatedUser = user;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => HomeShell(user: user)),
+      MaterialPageRoute(builder: (_) => HomeShell(user: authenticatedUser)),
     );
 
     setState(() => _loading = false);

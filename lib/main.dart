@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'data/db/app_database.dart';
 import 'map_page.dart';
 import 'constructions_list_page.dart';
+import 'dashboard_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,7 +12,7 @@ void main() async {
 class SigConstructionApp extends StatelessWidget {
   const SigConstructionApp({super.key});
 
-  // 🎨 Couleur principale (tu pourras la changer après)
+  // 🎨 Couleur principale
   static const Color primary = Color(0xFFBBF0CE);
 
   @override
@@ -38,20 +39,20 @@ class SigConstructionApp extends StatelessWidget {
           elevation: 6,
         ),
 
-        // ✅ CORRECTION ICI
-        cardTheme: CardThemeData(
+        // ✅ OBLIGATOIRE avec Material 3
+        cardTheme: const CardThemeData(
           elevation: 6,
           shadowColor: Colors.black12,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.all(Radius.circular(18)),
           ),
         ),
 
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.all(Radius.circular(14)),
             borderSide: BorderSide.none,
           ),
         ),
@@ -66,6 +67,7 @@ class SigConstructionApp extends StatelessWidget {
 ////////////////////////////////////////////////////////////////
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
+
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
@@ -117,7 +119,7 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.map, size: 48),
+                  const Icon(Icons.map_outlined, size: 48),
                   const SizedBox(height: 16),
                   const Text(
                     "SIG Construction",
@@ -143,7 +145,10 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 10),
-                    Text(_error!, style: const TextStyle(color: Colors.red)),
+                    Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
                   ],
                   const SizedBox(height: 18),
                   SizedBox(
@@ -152,7 +157,11 @@ class _LoginPageState extends State<LoginPage> {
                     child: FilledButton(
                       onPressed: _loading ? null : _login,
                       child: _loading
-                          ? const CircularProgressIndicator()
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Text("Se connecter"),
                     ),
                   ),
@@ -167,16 +176,19 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 ////////////////////////////////////////////////////////////////
-/// HOME
+/// HOME (CARTE + LISTE + DASHBOARD)
 ////////////////////////////////////////////////////////////////
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
+
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+
+  /// 🔑 clé vers MapPageState
   final GlobalKey<MapPageState> _mapKey = GlobalKey<MapPageState>();
 
   void _openInMap(String id) {
@@ -188,13 +200,25 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_index == 0 ? "Carte" : "Constructions"),
+        title: Text(
+          _index == 0
+              ? "Carte"
+              : _index == 1
+                  ? "Constructions"
+                  : "Dashboard",
+        ),
       ),
       body: IndexedStack(
         index: _index,
         children: [
-          MapPage(key: _mapKey, onTapFeature: (_) {}),
-          ConstructionsListPage(onOpenInMap: _openInMap),
+          MapPage(
+            key: _mapKey,
+            onTapFeature: (_) {},
+          ),
+          ConstructionsListPage(
+            onOpenInMap: _openInMap,
+          ),
+          const DashboardPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -208,6 +232,10 @@ class _HomeShellState extends State<HomeShell> {
           NavigationDestination(
             icon: Icon(Icons.list_alt_outlined),
             label: "Liste",
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            label: "Dashboard",
           ),
         ],
       ),

@@ -10,9 +10,11 @@ class AppDatabase {
 
   Database? _db;
 
-  /// Permet de rafraîchir UI (carte/liste) après insert/update/delete
+  /// 🔄 Rafraîchir carte / liste / dashboard
   final ValueNotifier<int> refreshTick = ValueNotifier<int>(0);
   void _tick() => refreshTick.value++;
+
+  // ================= DATABASE =================
 
   Future<Database> get database async {
     _db ??= await _open();
@@ -33,7 +35,7 @@ class AppDatabase {
     );
   }
 
-  // ---------------- TABLES ----------------
+  // ================= TABLES =================
 
   Future<void> _createTables(Database db) async {
     await db.execute('''
@@ -56,16 +58,25 @@ class AppDatabase {
     ''');
   }
 
-  // ---------------- SEED ----------------
+  // ================= SEED =================
 
   Future<void> _seed(Database db) async {
-    await db.insert('users', {'username': 'admin', 'password': 'admin'});
+    await db.insert('users', {
+      'username': 'admin',
+      'password': 'admin',
+    });
 
-    Map<String, dynamic> feature(String id, List<List<List<double>>> coords) {
+    Map<String, dynamic> feature(
+      String id,
+      List<List<List<double>>> coords,
+    ) {
       return {
         "type": "Feature",
         "properties": {"id": id},
-        "geometry": {"type": "Polygon", "coordinates": coords},
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": coords,
+        },
       };
     }
 
@@ -108,7 +119,7 @@ class AppDatabase {
     });
   }
 
-  // ---------------- AUTH ----------------
+  // ================= AUTH =================
 
   Future<bool> checkLogin(String username, String password) async {
     final db = await database;
@@ -121,11 +132,14 @@ class AppDatabase {
     return rows.isNotEmpty;
   }
 
-  // ---------------- GET / SEARCH ----------------
+  // ================= GET / SEARCH =================
 
   Future<List<Map<String, Object?>>> getConstructions() async {
     final db = await database;
-    return db.query('constructions', orderBy: 'date_releve DESC');
+    return db.query(
+      'constructions',
+      orderBy: 'date_releve DESC',
+    );
   }
 
   Future<Map<String, Object?>?> getConstructionById(String id) async {
@@ -152,6 +166,7 @@ class AppDatabase {
       where.add('LOWER(adresse) LIKE ?');
       args.add('%${adresseQuery.toLowerCase()}%');
     }
+
     if (type != null && type.trim().isNotEmpty) {
       where.add('type_construction = ?');
       args.add(type);
@@ -165,7 +180,7 @@ class AppDatabase {
     );
   }
 
-  // ---------------- INSERT ----------------
+  // ================= INSERT =================
 
   Future<void> insertConstruction({
     required String id,
@@ -189,7 +204,7 @@ class AppDatabase {
     _tick();
   }
 
-  // ---------------- UPDATE ATTRIBUTES ----------------
+  // ================= UPDATE =================
 
   Future<void> updateConstruction({
     required String id,
@@ -213,8 +228,6 @@ class AppDatabase {
     _tick();
   }
 
-  // ---------------- UPDATE GEOMETRY (IMPORTANT SIG) ----------------
-
   Future<void> updateGeometry({
     required String id,
     required Map<String, dynamic> geojsonFeature,
@@ -233,11 +246,43 @@ class AppDatabase {
     _tick();
   }
 
-  // ---------------- DELETE ----------------
+  // ================= DELETE =================
 
   Future<void> deleteConstruction(String id) async {
     final db = await database;
-    await db.delete('constructions', where: 'id = ?', whereArgs: [id]);
+    await db.delete(
+      'constructions',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     _tick();
+  }
+
+  // ================= DASHBOARD =================
+
+  /// 🔢 Nombre total de constructions
+  Future<int> countConstructions() async {
+    final db = await database;
+    final res =
+        await db.rawQuery('SELECT COUNT(*) as c FROM constructions');
+    return (res.first['c'] as int?) ?? 0;
+  }
+
+  /// 📊 Répartition par type
+  Future<Map<String, int>> countByType() async {
+    final db = await database;
+
+    final res = await db.rawQuery('''
+      SELECT type_construction, COUNT(*) as c
+      FROM constructions
+      GROUP BY type_construction
+    ''');
+
+    final map = <String, int>{};
+    for (final row in res) {
+      final type = (row['type_construction'] ?? 'inconnu').toString();
+      map[type] = (row['c'] as int?) ?? 0;
+    }
+    return map;
   }
 }

@@ -28,7 +28,7 @@ class AppDatabase {
 
     return openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await _createTables(db);
         await _seed(db);
@@ -57,6 +57,26 @@ class AppDatabase {
             );
           }
         }
+        if (oldVersion < 3) {
+          await db.execute(
+            'ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT "";',
+          );
+          await db.execute(
+            'ALTER TABLE users ADD COLUMN last_name TEXT NOT NULL DEFAULT "";',
+          );
+          await db.execute(
+            'ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT "";',
+          );
+          await db.execute(
+            'ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT "";',
+          );
+          await db.execute(
+            'UPDATE users SET email = username WHERE email = "";',
+          );
+          await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);',
+          );
+        }
       },
     );
   }
@@ -68,6 +88,10 @@ class AppDatabase {
       CREATE TABLE users(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
         role TEXT NOT NULL
       );
@@ -91,18 +115,30 @@ class AppDatabase {
   Future<void> _seed(Database db) async {
     await db.insert('users', {
       'username': 'agent1',
+      'first_name': 'Agent',
+      'last_name': 'Un',
+      'phone': '0600000001',
+      'email': 'agent1',
       'password': 'agent1',
       'role': 'agent',
     });
 
     await db.insert('users', {
       'username': 'agent2',
+      'first_name': 'Agent',
+      'last_name': 'Deux',
+      'phone': '0600000002',
+      'email': 'agent2',
       'password': 'agent2',
       'role': 'agent',
     });
 
     final supervisorId = await db.insert('users', {
       'username': 'supervisor',
+      'first_name': 'Super',
+      'last_name': 'viseur',
+      'phone': '0600000003',
+      'email': 'supervisor',
       'password': 'supervisor',
       'role': 'supervisor',
     });
@@ -168,24 +204,73 @@ class AppDatabase {
     final db = await database;
     final rows = await db.query(
       'users',
-      where: 'username = ? AND password = ?',
-      whereArgs: [username, password],
+      where: '(email = ? OR username = ?) AND password = ?',
+      whereArgs: [username, username, password],
       limit: 1,
     );
     if (rows.isEmpty) return null;
     return AppUser.fromMap(rows.first);
   }
 
+  Future<AppUser?> getUserByEmail(String email) async {
+    final db = await database;
+    final rows = await db.query(
+      'users',
+      where: 'email = ?',
+      whereArgs: [email],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return AppUser.fromMap(rows.first);
+  }
+
+  Future<AppUser> createUser({
+    required String firstName,
+    required String lastName,
+    required String phone,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    final db = await database;
+    final id = await db.insert('users', {
+      'username': email,
+      'first_name': firstName,
+      'last_name': lastName,
+      'phone': phone,
+      'email': email,
+      'password': password,
+      'role': role,
+    });
+
+    return AppUser(
+      id: id,
+      username: email,
+      firstName: firstName,
+      lastName: lastName,
+      phone: phone,
+      email: email,
+      role: role,
+    );
+  }
+
   // ================= GET / SEARCH =================
 
   Future<List<Map<String, Object?>>> getConstructionsForUser(
     AppUser user,
+    int? agentId,
   ) async {
     final db = await database;
+    final isFilteredSupervisor =
+        user.isSupervisor && agentId != null;
     return db.query(
       'constructions',
-      where: user.isSupervisor ? null : 'created_by = ?',
-      whereArgs: user.isSupervisor ? null : [user.id],
+      where: user.isSupervisor
+          ? (isFilteredSupervisor ? 'created_by = ?' : null)
+          : 'created_by = ?',
+      whereArgs: user.isSupervisor
+          ? (isFilteredSupervisor ? [agentId] : null)
+          : [user.id],
       orderBy: 'date_releve DESC',
     );
   }
@@ -205,6 +290,7 @@ class AppDatabase {
     required AppUser user,
     String adresseQuery = "",
     String? type,
+    int? agentId,
   }) async {
     final db = await database;
 
@@ -214,6 +300,9 @@ class AppDatabase {
     if (!user.isSupervisor) {
       where.add('created_by = ?');
       args.add(user.id);
+    } else if (agentId != null) {
+      where.add('created_by = ?');
+      args.add(agentId);
     }
 
     if (adresseQuery.trim().isNotEmpty) {
@@ -232,6 +321,17 @@ class AppDatabase {
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'date_releve DESC',
     );
+  }
+
+  Future<List<AppUser>> getAgents() async {
+    final db = await database;
+    final rows = await db.query(
+      'users',
+      where: 'role = ?',
+      whereArgs: ['agent'],
+      orderBy: 'first_name ASC, last_name ASC, username ASC',
+    );
+    return rows.map(AppUser.fromMap).toList();
   }
 
   // ================= INSERT =================

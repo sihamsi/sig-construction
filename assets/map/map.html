@@ -34,36 +34,11 @@
   // ================= MAP =================
   let map = L.map('map').setView([34.02, -6.84], 16);
 
-  // ================= BASE MAPS =================
-  const baseMaps = {
-    default: L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 20, attribution: '© Esri' }
-    ),
-
-    satellite: L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 20, attribution: '© Esri' }
-    ),
-
-    relief: L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 20, attribution: '© Esri' }
-    )
-  };
-
-  let currentBaseMap = baseMaps.default;
-  currentBaseMap.addTo(map);
-
-  // 👉 appelée par Flutter
-  function setBaseMap(type) {
-    if (currentBaseMap) {
-      map.removeLayer(currentBaseMap);
-    }
-
-    currentBaseMap = baseMaps[type] || baseMaps.default;
-    currentBaseMap.addTo(map);
-  }
+  // ================= BASE MAP (Satellite uniquement) =================
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 20, attribution: '© Esri' }
+  ).addTo(map);
 
   // ================= GEOJSON =================
   let geoLayer = null;

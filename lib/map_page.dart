@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'data/db/app_database.dart';
+import 'data/models/user.dart';
 
 class MapPage extends StatefulWidget {
-  const MapPage({super.key, required this.onTapFeature});
+  const MapPage({super.key, required this.onTapFeature, required this.user});
   final void Function(String id) onTapFeature;
+  final AppUser user;
 
   @override
   State<MapPage> createState() => MapPageState();
@@ -81,7 +83,8 @@ class MapPageState extends State<MapPage> {
   // ================= DATA → MAP =================
 
   Future<void> _pushGeoJsonToMap() async {
-    final rows = await AppDatabase.instance.getConstructions();
+    final rows =
+        await AppDatabase.instance.getConstructionsForUser(widget.user);
 
     final features = rows
         .map<Map<String, dynamic>?>((r) {
@@ -95,6 +98,8 @@ class MapPageState extends State<MapPage> {
               (r['type_construction'] ?? '').toString();
           f['properties']['adresse'] = (r['adresse'] ?? '').toString();
           f['properties']['contact'] = (r['contact'] ?? '').toString();
+          f['properties']['created_by'] =
+              (r['created_by'] ?? '').toString();
 
           return f;
         })
@@ -111,35 +116,6 @@ class MapPageState extends State<MapPage> {
     if (!_loaded) return;
     await _controller.runJavaScript("focusOn(${jsonEncode(id)});");
     setState(() => _selectedPolygonId = id);
-  }
-
-  // ================= TYPE DE CARTE =================
-
-  void _openMapTypeSheet() {
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const ListTile(title: Text("Type de carte")),
-          _mapTypeTile("Par défaut", Icons.map, "default"),
-          _mapTypeTile("Satellite", Icons.satellite_alt, "satellite"),
-          _mapTypeTile("Relief", Icons.terrain, "relief"),
-        ],
-      ),
-    );
-  }
-
-  ListTile _mapTypeTile(String title, IconData icon, String type) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      onTap: () {
-        _controller.runJavaScript("setBaseMap('$type');");
-        Navigator.pop(context);
-      },
-    );
   }
 
   // ================= RELEVÉ =================
@@ -291,6 +267,7 @@ class MapPageState extends State<MapPage> {
         contact: contactCtrl.text.trim(),
         typeConstruction: type,
         geojsonFeature: feature,
+        createdBy: widget.user.id,
       );
     }
   }
@@ -328,17 +305,6 @@ class MapPageState extends State<MapPage> {
 
         Positioned(
           top: 16,
-          right: 16,
-          child: FloatingActionButton(
-            heroTag: "layers",
-            mini: true,
-            onPressed: _openMapTypeSheet,
-            child: const Icon(Icons.layers_outlined),
-          ),
-        ),
-
-        Positioned(
-          top: 72,
           right: 16,
           child: FloatingActionButton(
             heroTag: "releve",

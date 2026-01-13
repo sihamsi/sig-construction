@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
+import '../models/user.dart';
 
 class AppDatabase {
   AppDatabase._();
@@ -27,10 +28,35 @@ class AppDatabase {
 
     return openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await _createTables(db);
         await _seed(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT "supervisor";',
+          );
+          await db.execute(
+            'ALTER TABLE constructions ADD COLUMN created_by INTEGER;',
+          );
+
+          final userRows = await db.query(
+            'users',
+            columns: ['id'],
+            orderBy: 'id ASC',
+            limit: 1,
+          );
+          final fallbackUserId =
+              (userRows.isNotEmpty ? userRows.first['id'] : null) as int?;
+          if (fallbackUserId != null) {
+            await db.update(
+              'constructions',
+              {'created_by': fallbackUserId},
+            );
+          }
+        }
       },
     );
   }
@@ -42,7 +68,8 @@ class AppDatabase {
       CREATE TABLE users(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
-        password TEXT NOT NULL
+        password TEXT NOT NULL,
+        role TEXT NOT NULL
       );
     ''');
 
@@ -53,7 +80,8 @@ class AppDatabase {
         contact TEXT,
         type_construction TEXT,
         geometrie_geojson TEXT,
-        date_releve TEXT
+        date_releve TEXT,
+        created_by INTEGER
       );
     ''');
   }
@@ -62,8 +90,21 @@ class AppDatabase {
 
   Future<void> _seed(Database db) async {
     await db.insert('users', {
-      'username': 'admin',
-      'password': 'admin',
+      'username': 'agent1',
+      'password': 'agent1',
+      'role': 'agent',
+    });
+
+    await db.insert('users', {
+      'username': 'agent2',
+      'password': 'agent2',
+      'role': 'agent',
+    });
+
+    final supervisorId = await db.insert('users', {
+      'username': 'supervisor',
+      'password': 'supervisor',
+      'role': 'supervisor',
     });
 
     Map<String, dynamic> feature(
@@ -107,6 +148,7 @@ class AppDatabase {
       'type_construction': 'residentiel',
       'geometrie_geojson': jsonEncode(c1),
       'date_releve': DateTime.now().toIso8601String(),
+      'created_by': supervisorId,
     });
 
     await db.insert('constructions', {
@@ -116,12 +158,13 @@ class AppDatabase {
       'type_construction': 'commercial',
       'geometrie_geojson': jsonEncode(c2),
       'date_releve': DateTime.now().toIso8601String(),
+      'created_by': supervisorId,
     });
   }
 
   // ================= AUTH =================
 
-  Future<bool> checkLogin(String username, String password) async {
+  Future<AppUser?> loginUser(String username, String password) async {
     final db = await database;
     final rows = await db.query(
       'users',
@@ -129,15 +172,20 @@ class AppDatabase {
       whereArgs: [username, password],
       limit: 1,
     );
-    return rows.isNotEmpty;
+    if (rows.isEmpty) return null;
+    return AppUser.fromMap(rows.first);
   }
 
   // ================= GET / SEARCH =================
 
-  Future<List<Map<String, Object?>>> getConstructions() async {
+  Future<List<Map<String, Object?>>> getConstructionsForUser(
+    AppUser user,
+  ) async {
     final db = await database;
     return db.query(
       'constructions',
+      where: user.isSupervisor ? null : 'created_by = ?',
+      whereArgs: user.isSupervisor ? null : [user.id],
       orderBy: 'date_releve DESC',
     );
   }
@@ -153,7 +201,8 @@ class AppDatabase {
     return rows.isEmpty ? null : rows.first;
   }
 
-  Future<List<Map<String, Object?>>> searchConstructions({
+  Future<List<Map<String, Object?>>> searchConstructionsForUser({
+    required AppUser user,
     String adresseQuery = "",
     String? type,
   }) async {
@@ -161,6 +210,11 @@ class AppDatabase {
 
     final where = <String>[];
     final args = <Object?>[];
+
+    if (!user.isSupervisor) {
+      where.add('created_by = ?');
+      args.add(user.id);
+    }
 
     if (adresseQuery.trim().isNotEmpty) {
       where.add('LOWER(adresse) LIKE ?');
@@ -188,6 +242,7 @@ class AppDatabase {
     required String contact,
     required String typeConstruction,
     required Map<String, dynamic> geojsonFeature,
+    required int createdBy,
     DateTime? dateReleve,
   }) async {
     final db = await database;
@@ -199,6 +254,7 @@ class AppDatabase {
       'type_construction': typeConstruction,
       'geometrie_geojson': jsonEncode(geojsonFeature),
       'date_releve': (dateReleve ?? DateTime.now()).toIso8601String(),
+      'created_by': createdBy,
     });
 
     _tick();
@@ -261,22 +317,25 @@ class AppDatabase {
   // ================= DASHBOARD =================
 
   /// 🔢 Nombre total de constructions
-  Future<int> countConstructions() async {
+  Future<int> countConstructionsForUser(AppUser user) async {
     final db = await database;
-    final res =
-        await db.rawQuery('SELECT COUNT(*) as c FROM constructions');
+    final res = await db.rawQuery(
+      'SELECT COUNT(*) as c FROM constructions ${user.isSupervisor ? "" : "WHERE created_by = ?"}',
+      user.isSupervisor ? null : [user.id],
+    );
     return (res.first['c'] as int?) ?? 0;
   }
 
   /// 📊 Répartition par type
-  Future<Map<String, int>> countByType() async {
+  Future<Map<String, int>> countByTypeForUser(AppUser user) async {
     final db = await database;
 
     final res = await db.rawQuery('''
       SELECT type_construction, COUNT(*) as c
       FROM constructions
+      ${user.isSupervisor ? "" : "WHERE created_by = ?"}
       GROUP BY type_construction
-    ''');
+    ''', user.isSupervisor ? null : [user.id]);
 
     final map = <String, int>{};
     for (final row in res) {

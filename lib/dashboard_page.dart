@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'data/db/app_database.dart';
+import 'data/models/user.dart';
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  const DashboardPage({super.key, required this.user});
+  final AppUser user;
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -24,8 +26,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _loadStats() {
-    _totalFuture = _db.countConstructions();
-    _byTypeFuture = _db.countByType();
+    _totalFuture = _db.countConstructionsForUser(widget.user);
+    _byTypeFuture = _db.countByTypeForUser(widget.user);
     if (mounted) setState(() {});
   }
 
@@ -53,7 +55,9 @@ class _DashboardPageState extends State<DashboardPage> {
                 }
 
                 return _StatCard(
-                  title: "Nombre total de constructions",
+                  title: widget.user.isSupervisor
+                      ? "Nombre total de constructions"
+                      : "Vos constructions",
                   value: snap.data.toString(),
                   icon: Icons.apartment,
                   color: Colors.teal,

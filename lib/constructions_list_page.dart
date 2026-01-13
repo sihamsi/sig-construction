@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'data/db/app_database.dart';
+import 'data/models/user.dart';
 
 class ConstructionsListPage extends StatefulWidget {
-  const ConstructionsListPage({super.key, required this.onOpenInMap});
+  const ConstructionsListPage({
+    super.key,
+    required this.onOpenInMap,
+    required this.user,
+  });
   final void Function(String id) onOpenInMap;
+  final AppUser user;
 
   @override
   State<ConstructionsListPage> createState() =>
@@ -59,10 +65,27 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Chip(
+              avatar: Icon(
+                widget.user.isSupervisor
+                    ? Icons.verified_outlined
+                    : Icons.person_outline,
+              ),
+              label: Text(
+                widget.user.isSupervisor
+                    ? "Vue superviseur : toutes les constructions"
+                    : "Vue agent : vos constructions uniquement",
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
           Expanded(
             child: FutureBuilder<List<Map<String, Object?>>>(
-              future: _db.searchConstructions(
+              future: _db.searchConstructionsForUser(
+                user: widget.user,
                 adresseQuery: _qAdresse,
                 type: _qType == "Tous" ? null : _qType,
               ),
@@ -86,6 +109,8 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                     final adresse = (r['adresse'] ?? '').toString();
                     final type =
                         (r['type_construction'] ?? '').toString();
+                    final createdBy =
+                        (r['created_by'] ?? '').toString();
 
                     return Card(
                       child: ListTile(
@@ -101,7 +126,11 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                               ? "Construction $id"
                               : adresse,
                         ),
-                        subtitle: Text("ID: $id • Type: $type"),
+                        subtitle: Text(
+                          widget.user.isSupervisor && createdBy.isNotEmpty
+                              ? "ID: $id • Type: $type • Agent: $createdBy"
+                              : "ID: $id • Type: $type",
+                        ),
                         onTap: () => widget.onOpenInMap(id),
                       ),
                     );

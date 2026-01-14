@@ -4,14 +4,6 @@ import 'construction_types.dart';
 import 'data/db/app_database.dart';
 import 'data/models/user.dart';
 
-/// ✅ Liste des constructions (version stable layout)
-///
-/// Fix principaux par rapport à v3:
-/// - Évite les erreurs "RenderBox was not laid out" liées à Flexible/Expanded
-///   dans les items des Dropdown (overlay avec contraintes parfois non bornées).
-/// - Recherche texte + filtre par type.
-/// - Tap = aller à la carte.
-/// - Long press = menu (Modifier attributs / Aller à la carte).
 class ConstructionsListPage extends StatefulWidget {
   const ConstructionsListPage({
     super.key,
@@ -29,10 +21,9 @@ class ConstructionsListPage extends StatefulWidget {
 class _ConstructionsListPageState extends State<ConstructionsListPage> {
   final _db = AppDatabase.instance;
 
-  String _q = ""; // recherche texte
+  String _q = "";
   String _qType = "Tous";
 
-  // (Optionnel) filtre agent pour superviseur
   int? _agentFilterId;
   List<AppUser> _agents = [];
 
@@ -91,7 +82,10 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                 decoration: const InputDecoration(labelText: "Contact"),
               ),
               const SizedBox(height: 10),
+
+              // TYPE DROPDOWN
               DropdownButtonFormField<String>(
+                isExpanded: true, // ✅ prevents overflow
                 value: type,
                 decoration: const InputDecoration(
                   labelText: "Type de construction",
@@ -109,6 +103,7 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                     .toList(),
                 onChanged: (v) => setModalState(() => type = v ?? type),
               ),
+
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -209,8 +204,10 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
+                      // TYPE FILTER
                       Expanded(
                         child: DropdownButtonFormField<String>(
+                          isExpanded: true, // ✅ prevents overflow
                           value: _qType,
                           decoration: const InputDecoration(labelText: "Type"),
                           items: [
@@ -232,10 +229,14 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                               setState(() => _qType = v ?? "Tous"),
                         ),
                       ),
+
                       if (widget.user.isSupervisor) ...[
                         const SizedBox(width: 10),
+
+                        // AGENT FILTER
                         Expanded(
                           child: DropdownButtonFormField<int?>(
+                            isExpanded: true, // ✅ prevents overflow
                             value: _agentFilterId,
                             decoration: const InputDecoration(
                               labelText: "Agent",
@@ -248,7 +249,11 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
                               ..._agents.map(
                                 (a) => DropdownMenuItem<int?>(
                                   value: a.id,
-                                  child: Text(a.fullName),
+                                  child: Text(
+                                    a.fullName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               ),
                             ],
@@ -360,7 +365,7 @@ class _ConstructionsListPageState extends State<ConstructionsListPage> {
   }
 }
 
-/// Petit widget sécurisé pour les items de dropdown (évite Expanded/Flexible non bornés).
+/// ✅ Dropdown item safe widget (NO Expanded)
 class _DropdownTypeItem extends StatelessWidget {
   const _DropdownTypeItem({required this.label, required this.color});
   final String label;
@@ -369,7 +374,7 @@ class _DropdownTypeItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 220),
+      constraints: const BoxConstraints(maxWidth: 180), // ✅ safer
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -379,7 +384,9 @@ class _DropdownTypeItem extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
-          Expanded(
+          Flexible(
+            // ✅ instead of Expanded
+            fit: FlexFit.loose,
             child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
         ],

@@ -7,17 +7,6 @@ import 'construction_types.dart';
 import 'data/db/app_database.dart';
 import 'data/models/user.dart';
 
-/// ✅ MapPage (Leaflet + WebView)
-///
-/// Fix principaux par rapport à v3:
-/// - Donne une contrainte de taille claire au WebView (Positioned.fill + StackFit.expand)
-///   pour éviter "RenderBox was not laid out" sur certains appareils.
-/// - Dropdown agent (superviseur) avec largeur bornée + isExpanded.
-/// - Le reste des fonctionnalités (détails, édition attributs, etc.) est identique.
-///
-/// ⚠️ Couleurs:
-/// - Flutter envoie `feature.properties.type_color` (hex).
-/// - map.html DOIT utiliser cette propriété dans sa fonction style.
 class MapPage extends StatefulWidget {
   const MapPage({super.key, required this.onTapFeature, required this.user});
   final void Function(String id) onTapFeature;
@@ -29,10 +18,15 @@ class MapPage extends StatefulWidget {
 
 class MapPageState extends State<MapPage> {
   late final WebViewController _controller;
+
   bool _loaded = false;
   bool _detailsOpen = false;
 
+  // ✅ NEW: mode dessin (pour afficher bouton Annuler)
+  bool _isDrawing = false;
+
   String? _selectedPolygonId;
+
   List<AppUser> _agents = [];
   int? _agentFilterId;
 
@@ -76,6 +70,18 @@ class MapPageState extends State<MapPage> {
     try {
       final data = jsonDecode(msg.message);
 
+      // ✅ DRAW events (si map.html les envoie)
+      if (data['type'] == 'draw_start') {
+        if (!mounted) return;
+        setState(() => _isDrawing = true);
+        return;
+      }
+      if (data['type'] == 'draw_end' || data['type'] == 'draw_cancel') {
+        if (!mounted) return;
+        setState(() => _isDrawing = false);
+        return;
+      }
+
       if (data['type'] == 'tap') {
         final id = data['id'].toString();
         if (!mounted) return;
@@ -92,6 +98,9 @@ class MapPageState extends State<MapPage> {
       }
 
       if (data['type'] == 'created') {
+        // ✅ fin du mode dessin même si draw_end n'est pas envoyé
+        if (mounted) setState(() => _isDrawing = false);
+
         final feature = (data['feature'] as Map).cast<String, dynamic>();
         await _openCreateForm(feature);
         return;
@@ -164,10 +173,31 @@ class MapPageState extends State<MapPage> {
     try {
       await _controller.runJavaScript('clearSelection();');
     } catch (_) {
-      // ignore (si map.html n'a pas encore la fonction)
+      // ignore
     }
     if (!mounted) return;
     setState(() => _selectedPolygonId = null);
+  }
+
+  // ================= DRAW ACTIONS =================
+
+  Future<void> _startDraw() async {
+    await clearSelection();
+
+    if (!mounted) return;
+    setState(() {
+      _isDrawing = true;
+      _selectedPolygonId = null;
+    });
+
+    await _controller.runJavaScript('startDraw();');
+  }
+
+  Future<void> _cancelDraw() async {
+    if (!_loaded) return;
+    await _controller.runJavaScript('cancelDraw();'); // ✅ ICI EXACTEMENT
+    if (!mounted) return;
+    setState(() => _isDrawing = false);
   }
 
   // ================= DETAILS =================
@@ -337,6 +367,7 @@ class MapPageState extends State<MapPage> {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 value: type,
                 decoration: const InputDecoration(
                   labelText: 'Type de construction',
@@ -357,7 +388,13 @@ class MapPageState extends State<MapPage> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(t.label),
+                            Flexible(
+                              child: Text(
+                                t.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -468,12 +505,7 @@ class MapPageState extends State<MapPage> {
     );
   }
 
-  // ================= ACTIONS =================
-
-  Future<void> _startDraw() async {
-    await clearSelection();
-    await _controller.runJavaScript('startDraw();');
-  }
+  // ================= GEOMETRY EDIT / DELETE =================
 
   Future<void> _enableGeometryEdit() async {
     if (_selectedPolygonId == null) return;
@@ -521,6 +553,7 @@ class MapPageState extends State<MapPage> {
                 decoration: const InputDecoration(labelText: 'Contact'),
               ),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 value: type,
                 decoration: const InputDecoration(
                   labelText: 'Type de construction',
@@ -541,7 +574,13 @@ class MapPageState extends State<MapPage> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(t.label),
+                            Flexible(
+                              child: Text(
+                                t.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -605,9 +644,23 @@ class MapPageState extends State<MapPage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // ✅ Important: taille explicite
         Positioned.fill(child: WebViewWidget(controller: _controller)),
         if (!_loaded) const Center(child: CircularProgressIndicator()),
+
+        // ✅ Bouton Annuler dessin (visible seulement pendant le dessin)
+        if (_isDrawing)
+          Positioned(
+            bottom: 24,
+            left: 16,
+            child: FloatingActionButton.extended(
+              heroTag: 'cancel_draw',
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              onPressed: _cancelDraw,
+              icon: const Icon(Icons.close),
+              label: const Text('Annuler dessin'),
+            ),
+          ),
 
         if (widget.user.isSupervisor)
           Positioned(

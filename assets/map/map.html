@@ -20,6 +20,7 @@
       padding: 0;
     }
 
+    /* Tu caches la toolbar Draw, donc on gère Annuler via Flutter */
     .leaflet-draw-toolbar,
     .leaflet-draw-actions {
       display: none !important;
@@ -45,14 +46,14 @@
   let idToLayer = {};
   let selectedLayer = null;
 
-  // (garde tes variables draw/edit existantes)
+  // DRAW / EDIT
   let editingLayer = null;
   let drawHandler = null;
 
   // 1) STYLE basé sur type_color envoyé par Flutter
   function featureStyle(feature) {
     const p = (feature && feature.properties) ? feature.properties : {};
-    const c = p.type_color || '#546E7A'; // couleur venant de Flutter
+    const c = p.type_color || '#546E7A';
     return {
       color: c,
       fillColor: c,
@@ -143,29 +144,59 @@
     const layer = idToLayer[String(id)];
     if (!layer) return;
     map.fitBounds(layer.getBounds(), { padding: [30, 30] });
-    selectLayer(layer, false); // false = ne pas renvoyer "tap"
+    selectLayer(layer, false);
   }
 
   // ================= DRAW =================
   function startDraw() {
     clearSelection(true);
-    if (drawHandler) drawHandler.disable();
+
+    // si un draw est déjà en cours
+    if (drawHandler) {
+      drawHandler.disable();
+      drawHandler = null;
+    }
 
     drawHandler = new L.Draw.Polygon(map, {
       shapeOptions: { color: '#2E7D32' }
     });
+
     drawHandler.enable();
+
+    // ✅ informer Flutter pour afficher bouton Annuler
+    if (window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_start' }));
+    }
+  }
+
+  // ✅ annuler le dessin en cours (appelé depuis Flutter)
+  function cancelDraw() {
+    if (drawHandler) {
+      drawHandler.disable();
+      drawHandler = null;
+    }
+
+    if (window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_cancel' }));
+    }
   }
 
   map.on(L.Draw.Event.CREATED, e => {
     const feature = e.layer.toGeoJSON();
+
     if (window.MapChannel) {
       window.MapChannel.postMessage(JSON.stringify({
         type: 'created',
         feature
       }));
+      // ✅ fin du draw (pour Flutter)
+      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_end' }));
     }
-    drawHandler.disable();
+
+    if (drawHandler) {
+      drawHandler.disable();
+      drawHandler = null;
+    }
   });
 
   // ================= EDIT / DELETE =================

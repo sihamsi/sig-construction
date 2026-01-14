@@ -520,7 +520,9 @@ class _HomeShellState extends State<HomeShell> {
 
   void _openInMap(String id) {
     setState(() => _index = 0);
-    _mapKey.currentState?.focusOn(id);
+    final map = _mapKey.currentState;
+    map?.focusOn(id);
+    map?.showDetails(id);
   }
 
   void _logout() {

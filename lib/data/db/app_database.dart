@@ -1,8 +1,10 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
+
 import '../models/user.dart';
 
 class AppDatabase {
@@ -28,9 +30,13 @@ class AppDatabase {
 
     return openDatabase(
       dbPath,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await _createTables(db);
+        // ✅ IMPORTANT
+        // Avant : on seedait agent1/agent2 (comptes démo) => ça polluait le filtre superviseur.
+        // Maintenant : on seed uniquement (optionnel) un superviseur + 2 constructions démo.
+        // Si tu ne veux AUCUNE donnée démo, commente _seed(db);
         await _seed(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -51,10 +57,7 @@ class AppDatabase {
           final fallbackUserId =
               (userRows.isNotEmpty ? userRows.first['id'] : null) as int?;
           if (fallbackUserId != null) {
-            await db.update(
-              'constructions',
-              {'created_by': fallbackUserId},
-            );
+            await db.update('constructions', {'created_by': fallbackUserId});
           }
         }
         if (oldVersion < 3) {
@@ -77,8 +80,41 @@ class AppDatabase {
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);',
           );
         }
+
+        if (oldVersion < 4) {
+          // ✅ Nettoyage : suppression des comptes démo agent1/agent2 (s'ils existent)
+          // sans casser les constructions.
+          await _removeDemoAgentsIfSafe(db);
+        }
       },
     );
+  }
+
+  Future<void> _removeDemoAgentsIfSafe(Database db) async {
+    Future<void> tryDelete(String username) async {
+      final rows = await db.query(
+        'users',
+        columns: ['id'],
+        where: 'username = ? AND role = ?',
+        whereArgs: [username, 'agent'],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final id = rows.first['id'] as int?;
+      if (id == null) return;
+
+      final countRes = await db.rawQuery(
+        'SELECT COUNT(*) as c FROM constructions WHERE created_by = ?',
+        [id],
+      );
+      final c = (countRes.first['c'] as int?) ?? 0;
+      if (c == 0) {
+        await db.delete('users', where: 'id = ?', whereArgs: [id]);
+      }
+    }
+
+    await tryDelete('agent1');
+    await tryDelete('agent2');
   }
 
   // ================= TABLES =================
@@ -110,29 +146,12 @@ class AppDatabase {
     ''');
   }
 
-  // ================= SEED =================
+  // ================= SEED (OPTIONNEL) =================
 
   Future<void> _seed(Database db) async {
-    await db.insert('users', {
-      'username': 'agent1',
-      'first_name': 'Agent',
-      'last_name': 'Un',
-      'phone': '0600000001',
-      'email': 'agent1',
-      'password': 'agent1',
-      'role': 'agent',
-    });
+    // ⚠️ Si tu ne veux aucune donnée démo, commente tout le contenu de cette fonction.
 
-    await db.insert('users', {
-      'username': 'agent2',
-      'first_name': 'Agent',
-      'last_name': 'Deux',
-      'phone': '0600000002',
-      'email': 'agent2',
-      'password': 'agent2',
-      'role': 'agent',
-    });
-
+    // ✅ On seed seulement un superviseur démo (pas agent1/agent2)
     final supervisorId = await db.insert('users', {
       'username': 'supervisor',
       'first_name': 'Super',
@@ -143,21 +162,15 @@ class AppDatabase {
       'role': 'supervisor',
     });
 
-    Map<String, dynamic> feature(
-      String id,
-      List<List<List<double>>> coords,
-    ) {
+    Map<String, dynamic> feature(String id, List<List<List<double>>> coords) {
       return {
-        "type": "Feature",
-        "properties": {"id": id},
-        "geometry": {
-          "type": "Polygon",
-          "coordinates": coords,
-        },
+        'type': 'Feature',
+        'properties': {'id': id},
+        'geometry': {'type': 'Polygon', 'coordinates': coords},
       };
     }
 
-    final c1 = feature("c1", [
+    final c1 = feature('c1', [
       [
         [-6.84, 34.02],
         [-6.84, 34.021],
@@ -167,7 +180,7 @@ class AppDatabase {
       ],
     ]);
 
-    final c2 = feature("c2", [
+    final c2 = feature('c2', [
       [
         [-6.835, 34.015],
         [-6.835, 34.016],
@@ -261,8 +274,7 @@ class AppDatabase {
     int? agentId,
   ) async {
     final db = await database;
-    final isFilteredSupervisor =
-        user.isSupervisor && agentId != null;
+    final isFilteredSupervisor = user.isSupervisor && agentId != null;
     return db.query(
       'constructions',
       where: user.isSupervisor
@@ -286,6 +298,7 @@ class AppDatabase {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Recherche multi-attributs (nom/adresse/contact/id) + filtre type + filtre agent (superviseur)
   Future<List<Map<String, Object?>>> searchConstructionsForUser({
     required AppUser user,
     String adresseQuery = "",
@@ -305,9 +318,15 @@ class AppDatabase {
       args.add(agentId);
     }
 
-    if (adresseQuery.trim().isNotEmpty) {
-      where.add('LOWER(adresse) LIKE ?');
-      args.add('%${adresseQuery.toLowerCase()}%');
+    final q = adresseQuery.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      // ✅ Recherche sur adresse OU contact OU id
+      where.add(
+        '(LOWER(IFNULL(adresse, "")) LIKE ? OR LOWER(IFNULL(contact, "")) LIKE ? OR LOWER(IFNULL(id, "")) LIKE ?)',
+      );
+      args.add('%$q%');
+      args.add('%$q%');
+      args.add('%$q%');
     }
 
     if (type != null && type.trim().isNotEmpty) {
@@ -327,8 +346,8 @@ class AppDatabase {
     final db = await database;
     final rows = await db.query(
       'users',
-      where: 'role = ?',
-      whereArgs: ['agent'],
+      where: 'role = ? AND username NOT IN (?, ?)',
+      whereArgs: ['agent', 'agent1', 'agent2'],
       orderBy: 'first_name ASC, last_name ASC, username ASC',
     );
     return rows.map(AppUser.fromMap).toList();
@@ -392,9 +411,7 @@ class AppDatabase {
 
     await db.update(
       'constructions',
-      {
-        'geometrie_geojson': jsonEncode(geojsonFeature),
-      },
+      {'geometrie_geojson': jsonEncode(geojsonFeature)},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -406,11 +423,7 @@ class AppDatabase {
 
   Future<void> deleteConstruction(String id) async {
     final db = await database;
-    await db.delete(
-      'constructions',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await db.delete('constructions', where: 'id = ?', whereArgs: [id]);
     _tick();
   }
 

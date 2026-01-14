@@ -40,73 +40,115 @@
     { maxZoom: 20, attribution: '© Esri' }
   ).addTo(map);
 
-  // ================= GEOJSON =================
-  let geoLayer = null;
+  // ================= GEOJSON / SELECTION =================
+  let geojsonLayer = null;
+  let idToLayer = {};
   let selectedLayer = null;
+
+  // (garde tes variables draw/edit existantes)
   let editingLayer = null;
   let drawHandler = null;
 
-  function styleFeature(feature) {
-    const t = (feature.properties?.type_construction || '').toLowerCase();
-    let color = '#7A1E2D';
-    if (t.includes('commercial')) color = '#C62828';
-
-    return { color, weight: 2, fillOpacity: 0.35 };
+  // 1) STYLE basé sur type_color envoyé par Flutter
+  function featureStyle(feature) {
+    const p = (feature && feature.properties) ? feature.properties : {};
+    const c = p.type_color || '#546E7A'; // couleur venant de Flutter
+    return {
+      color: c,
+      fillColor: c,
+      weight: 2,
+      fillOpacity: 0.45
+    };
   }
 
-  function clearSelection() {
-    if (selectedLayer && geoLayer) {
-      geoLayer.resetStyle(selectedLayer);
-      selectedLayer = null;
+  function selectedStyle(feature) {
+    const base = featureStyle(feature);
+    base.weight = 4;
+    base.fillOpacity = 0.65;
+    return base;
+  }
+
+  // 2) Gestion sélection/désélection + notify Flutter
+  function clearSelection(notify = true) {
+    if (selectedLayer) {
+      selectedLayer.setStyle(featureStyle(selectedLayer.feature));
+    }
+    selectedLayer = null;
+
+    if (notify && window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({ type: 'untap' }));
     }
   }
 
+  function selectLayer(layer, notify = true) {
+    if (!layer) return;
+
+    // toggle : si je reclique sur le même => désélection
+    if (selectedLayer === layer) {
+      clearSelection(notify);
+      return;
+    }
+
+    // reset ancien
+    if (selectedLayer) {
+      selectedLayer.setStyle(featureStyle(selectedLayer.feature));
+    }
+
+    selectedLayer = layer;
+    layer.setStyle(selectedStyle(layer.feature));
+    layer.bringToFront();
+
+    const id = layer.feature?.properties?.id;
+    if (notify && id && window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({ type: 'tap', id: String(id) }));
+    }
+  }
+
+  function onEachFeature(feature, layer) {
+    const id = feature?.properties?.id;
+    if (id) idToLayer[String(id)] = layer;
+
+    layer.on('click', function(e) {
+      if (e && e.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
+      selectLayer(layer, true);
+    });
+  }
+
+  // clic sur la carte vide => deselect
+  map.on('click', function() {
+    clearSelection(true);
+  });
+
+  // 3) setData(...) avec style + onEachFeature
   function setData(featureCollection) {
-    clearSelection();
-    if (geoLayer) map.removeLayer(geoLayer);
+    if (geojsonLayer) {
+      map.removeLayer(geojsonLayer);
+    }
 
-    geoLayer = L.geoJSON(featureCollection, {
-      style: styleFeature,
-      onEachFeature: (feature, layer) => {
-        layer.on('click', () => {
-          clearSelection();
-          selectedLayer = layer;
+    idToLayer = {};
+    selectedLayer = null;
 
-          layer.setStyle({
-            color: '#FFD54F',
-            weight: 3,
-            fillOpacity: 0.5
-          });
-
-          const id = feature.properties?.id;
-          if (window.MapChannel && id) {
-            window.MapChannel.postMessage(JSON.stringify({ type: 'tap', id }));
-          }
-        });
-      }
+    geojsonLayer = L.geoJSON(featureCollection, {
+      style: featureStyle,
+      onEachFeature: onEachFeature
     }).addTo(map);
 
-    if (geoLayer.getLayers().length > 0) {
-      map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
+    if (geojsonLayer.getLayers().length > 0) {
+      map.fitBounds(geojsonLayer.getBounds(), { padding: [20, 20] });
     }
   }
 
+  // 4) focusOn(id) => sélection sans renvoyer "tap"
   function focusOn(id) {
-    if (!geoLayer) return;
-
-    geoLayer.eachLayer(layer => {
-      if (layer.feature?.properties?.id === id) {
-        clearSelection();
-        selectedLayer = layer;
-        layer.setStyle({ color: '#FFD54F', weight: 3 });
-        map.fitBounds(layer.getBounds(), { padding: [40, 40] });
-      }
-    });
+    const layer = idToLayer[String(id)];
+    if (!layer) return;
+    map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+    selectLayer(layer, false); // false = ne pas renvoyer "tap"
   }
 
   // ================= DRAW =================
   function startDraw() {
-    clearSelection();
+    clearSelection(true);
     if (drawHandler) drawHandler.disable();
 
     drawHandler = new L.Draw.Polygon(map, {
@@ -126,13 +168,15 @@
     drawHandler.disable();
   });
 
+  // ================= EDIT / DELETE =================
   function enableEdit(id) {
-    geoLayer.eachLayer(layer => {
-      if (layer.feature?.properties?.id === id) {
-        editingLayer = layer;
-        layer.editing.enable();
-      }
-    });
+    if (!geojsonLayer) return;
+
+    const layer = idToLayer[String(id)];
+    if (!layer) return;
+
+    editingLayer = layer;
+    layer.editing.enable();
   }
 
   function saveEdit(id) {
@@ -140,22 +184,27 @@
     editingLayer.editing.disable();
 
     const feature = editingLayer.toGeoJSON();
-    window.MapChannel.postMessage(JSON.stringify({
-      type: 'edited',
-      id,
-      feature
-    }));
+    if (window.MapChannel) {
+      window.MapChannel.postMessage(JSON.stringify({
+        type: 'edited',
+        id,
+        feature
+      }));
+    }
 
     editingLayer = null;
   }
 
   function deletePolygon(id) {
-    geoLayer.eachLayer(layer => {
-      if (layer.feature?.properties?.id === id) {
-        geoLayer.removeLayer(layer);
-      }
-    });
-    clearSelection();
+    if (!geojsonLayer) return;
+
+    const layer = idToLayer[String(id)];
+    if (!layer) return;
+
+    geojsonLayer.removeLayer(layer);
+    delete idToLayer[String(id)];
+
+    if (selectedLayer === layer) clearSelection(true);
   }
 </script>
 </body>

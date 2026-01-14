@@ -14,7 +14,7 @@ class SigConstructionApp extends StatelessWidget {
   const SigConstructionApp({super.key});
 
   // 🎨 Couleur principale
-  static const Color primary = Color(0xFFBBF0CE);
+  static const Color primary = Color.fromARGB(255, 4, 81, 33);
 
   @override
   Widget build(BuildContext context) {

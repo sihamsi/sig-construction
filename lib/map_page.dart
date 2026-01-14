@@ -22,7 +22,7 @@ class MapPageState extends State<MapPage> {
   bool _loaded = false;
   bool _detailsOpen = false;
 
-  // ✅ NEW: mode dessin (pour afficher bouton Annuler)
+  // ✅ Mode dessin
   bool _isDrawing = false;
 
   String? _selectedPolygonId;
@@ -48,7 +48,6 @@ class MapPageState extends State<MapPage> {
       )
       ..loadFlutterAsset('assets/map/map.html');
 
-    // Refresh carte quand la DB change
     AppDatabase.instance.refreshTick.addListener(() async {
       if (_loaded) await _pushGeoJsonToMap();
     });
@@ -70,7 +69,7 @@ class MapPageState extends State<MapPage> {
     try {
       final data = jsonDecode(msg.message);
 
-      // ✅ DRAW events (si map.html les envoie)
+      // DRAW events (si map.html les envoie)
       if (data['type'] == 'draw_start') {
         if (!mounted) return;
         setState(() => _isDrawing = true);
@@ -98,9 +97,7 @@ class MapPageState extends State<MapPage> {
       }
 
       if (data['type'] == 'created') {
-        // ✅ fin du mode dessin même si draw_end n'est pas envoyé
         if (mounted) setState(() => _isDrawing = false);
-
         final feature = (data['feature'] as Map).cast<String, dynamic>();
         await _openCreateForm(feature);
         return;
@@ -159,7 +156,7 @@ class MapPageState extends State<MapPage> {
     await _controller.runJavaScript('setData(${jsonEncode(fc)});');
   }
 
-  // ================= API (pour HomeShell) =================
+  // ================= API =================
 
   Future<void> focusOn(String id) async {
     if (!_loaded) return;
@@ -172,14 +169,12 @@ class MapPageState extends State<MapPage> {
     if (!_loaded) return;
     try {
       await _controller.runJavaScript('clearSelection();');
-    } catch (_) {
-      // ignore
-    }
+    } catch (_) {}
     if (!mounted) return;
     setState(() => _selectedPolygonId = null);
   }
 
-  // ================= DRAW ACTIONS =================
+  // ================= DRAW =================
 
   Future<void> _startDraw() async {
     await clearSelection();
@@ -195,7 +190,7 @@ class MapPageState extends State<MapPage> {
 
   Future<void> _cancelDraw() async {
     if (!_loaded) return;
-    await _controller.runJavaScript('cancelDraw();'); // ✅ ICI EXACTEMENT
+    await _controller.runJavaScript('cancelDraw();');
     if (!mounted) return;
     setState(() => _isDrawing = false);
   }
@@ -214,7 +209,7 @@ class MapPageState extends State<MapPage> {
     final contact = (row['contact'] ?? '').toString();
     final typeCode = (row['type_construction'] ?? '').toString();
     final date = (row['date_releve'] ?? '').toString();
-    final createdBy = row['created_by'];
+    final createdBy = row['created_by']; // utilisé pour autorisation delete
 
     final typeDef = ConstructionTypes.byCode(typeCode);
 
@@ -228,12 +223,7 @@ class MapPageState extends State<MapPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ListTile(
-              leading: const Icon(Icons.tag),
-              title: const Text('ID'),
-              subtitle: Text(id),
-              contentPadding: EdgeInsets.zero,
-            ),
+            // ❌ ID supprimé
             ListTile(
               leading: const Icon(Icons.home_outlined),
               title: const Text('Adresse'),
@@ -265,12 +255,8 @@ class MapPageState extends State<MapPage> {
               subtitle: Text(date.isEmpty ? '-' : date),
               contentPadding: EdgeInsets.zero,
             ),
-            ListTile(
-              leading: const Icon(Icons.person_outline),
-              title: const Text('Créé par'),
-              subtitle: Text(createdBy == null ? '-' : createdBy.toString()),
-              contentPadding: EdgeInsets.zero,
-            ),
+
+            // ❌ Créé par supprimé
             const SizedBox(height: 8),
             Row(
               children: [
@@ -333,6 +319,8 @@ class MapPageState extends State<MapPage> {
       ),
     ).whenComplete(() => _detailsOpen = false);
   }
+
+  // ================= EDIT ATTRIBUTES =================
 
   Future<void> _openEditAttributes(String id) async {
     final row = await AppDatabase.instance.getConstructionById(id);
@@ -440,7 +428,7 @@ class MapPageState extends State<MapPage> {
     }
   }
 
-  // ================= RELEVÉ =================
+  // ================= RELEVÉ MENU =================
 
   void _openReleveMenu() {
     showModalBottomSheet(
@@ -622,7 +610,7 @@ class MapPageState extends State<MapPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Supprimer ?'),
-        content: Text('Confirmer la suppression de $id'),
+        content: Text('Confirmer la suppression'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -647,7 +635,7 @@ class MapPageState extends State<MapPage> {
         Positioned.fill(child: WebViewWidget(controller: _controller)),
         if (!_loaded) const Center(child: CircularProgressIndicator()),
 
-        // ✅ Bouton Annuler dessin (visible seulement pendant le dessin)
+        // ✅ Bouton Annuler dessin
         if (_isDrawing)
           Positioned(
             bottom: 24,

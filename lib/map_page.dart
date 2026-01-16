@@ -22,8 +22,9 @@ class MapPageState extends State<MapPage> {
   bool _loaded = false;
   bool _detailsOpen = false;
 
-  // ✅ Mode dessin
+  // ✅ modes
   bool _isDrawing = false;
+  bool _isEditingGeometry = false;
 
   String? _selectedPolygonId;
 
@@ -69,7 +70,7 @@ class MapPageState extends State<MapPage> {
     try {
       final data = jsonDecode(msg.message);
 
-      // DRAW events (si map.html les envoie)
+      // (optionnel) si tu envoies ces events depuis map.html
       if (data['type'] == 'draw_start') {
         if (!mounted) return;
         setState(() => _isDrawing = true);
@@ -97,9 +98,14 @@ class MapPageState extends State<MapPage> {
       }
 
       if (data['type'] == 'created') {
-        if (mounted) setState(() => _isDrawing = false);
+        if (!mounted) return;
+        setState(() => _isDrawing = false);
+
         final feature = (data['feature'] as Map).cast<String, dynamic>();
         await _openCreateForm(feature);
+
+        // après création, refresh (au cas où)
+        if (_loaded) await _pushGeoJsonToMap();
         return;
       }
 
@@ -113,7 +119,21 @@ class MapPageState extends State<MapPage> {
         );
 
         if (!mounted) return;
-        setState(() => _selectedPolygonId = null);
+        setState(() {
+          _isEditingGeometry = false;
+          _selectedPolygonId = null;
+        });
+        if (data['type'] == 'js_error') {
+          debugPrint(
+            "JS ERROR: ${data['message']} | ${data['source']}:${data['line']}:${data['col']}",
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Erreur JS: ${data['message']}")),
+          );
+          return;
+        }
+
+
         await _pushGeoJsonToMap();
         return;
       }
@@ -182,6 +202,7 @@ class MapPageState extends State<MapPage> {
     if (!mounted) return;
     setState(() {
       _isDrawing = true;
+      _isEditingGeometry = false;
       _selectedPolygonId = null;
     });
 
@@ -190,9 +211,45 @@ class MapPageState extends State<MapPage> {
 
   Future<void> _cancelDraw() async {
     if (!_loaded) return;
-    await _controller.runJavaScript('cancelDraw();');
+    try {
+      await _controller.runJavaScript('cancelDraw();');
+    } catch (_) {
+      // si cancelDraw n'existe pas encore dans map.html
+    }
     if (!mounted) return;
     setState(() => _isDrawing = false);
+  }
+
+  // ================= EDIT SHAPE =================
+
+  Future<void> _enableGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
+
+    // éviter conflit dessin / édition
+    if (_isDrawing) await _cancelDraw();
+
+    await _controller.runJavaScript(
+      'enableEdit(${jsonEncode(_selectedPolygonId)});',
+    );
+
+    if (!mounted) return;
+    setState(() => _isEditingGeometry = true);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          "Mode édition : déplace les sommets puis clique sur 'Valider la modification'.",
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveGeometryEdit() async {
+    if (_selectedPolygonId == null) return;
+    await _controller.runJavaScript(
+      'saveEdit(${jsonEncode(_selectedPolygonId)});',
+    );
+    // ⚠️ la DB est mise à jour quand map.html envoie l'event "edited"
   }
 
   // ================= DETAILS =================
@@ -223,7 +280,7 @@ class MapPageState extends State<MapPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ❌ ID supprimé
+            // ✅ ID + Créé par supprimés comme tu as demandé
             ListTile(
               leading: const Icon(Icons.home_outlined),
               title: const Text('Adresse'),
@@ -256,8 +313,8 @@ class MapPageState extends State<MapPage> {
               contentPadding: EdgeInsets.zero,
             ),
 
-            // ❌ Créé par supprimé
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+
             Row(
               children: [
                 Expanded(
@@ -280,7 +337,10 @@ class MapPageState extends State<MapPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+
+            const SizedBox(height: 12),
+
+            // ✅ Modifier attributs
             FilledButton.icon(
               onPressed: () async {
                 Navigator.pop(context);
@@ -289,7 +349,34 @@ class MapPageState extends State<MapPage> {
               icon: const Icon(Icons.edit_outlined),
               label: const Text('Modifier les attributs'),
             ),
+
             const SizedBox(height: 10),
+
+            // ✅ Modifier shape (édition géométrie)
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _enableGeometryEdit();
+              },
+              icon: const Icon(Icons.edit_location_alt),
+              label: const Text('Modifier la forme'),
+            ),
+
+            const SizedBox(height: 10),
+
+            // ✅ Valider shape
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _saveGeometryEdit();
+              },
+              icon: const Icon(Icons.check_circle),
+              label: const Text('Valider la modification'),
+            ),
+
+            const SizedBox(height: 10),
+
+            // ✅ Delete
             FilledButton.icon(
               onPressed: () async {
                 final canDelete =
@@ -425,6 +512,7 @@ class MapPageState extends State<MapPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Attributs modifiés ✅')));
+      if (_loaded) await _pushGeoJsonToMap();
     }
   }
 
@@ -455,7 +543,7 @@ class MapPageState extends State<MapPage> {
                     clearSelection,
                   ),
                   _actionTile(
-                    Icons.edit,
+                    Icons.edit_location_alt,
                     'Modifier la forme',
                     _enableGeometryEdit,
                   ),
@@ -467,9 +555,7 @@ class MapPageState extends State<MapPage> {
                   ),
                   _actionTile(Icons.delete, 'Supprimer', () async {
                     final ok = await _confirmDelete(_selectedPolygonId!);
-                    if (ok == true) {
-                      await _deletePolygon(_selectedPolygonId!);
-                    }
+                    if (ok == true) await _deletePolygon(_selectedPolygonId!);
                   }, color: Colors.red),
                 ],
         ),
@@ -493,27 +579,16 @@ class MapPageState extends State<MapPage> {
     );
   }
 
-  // ================= GEOMETRY EDIT / DELETE =================
-
-  Future<void> _enableGeometryEdit() async {
-    if (_selectedPolygonId == null) return;
-    await _controller.runJavaScript(
-      'enableEdit(${jsonEncode(_selectedPolygonId)});',
-    );
-  }
-
-  Future<void> _saveGeometryEdit() async {
-    if (_selectedPolygonId == null) return;
-    await _controller.runJavaScript(
-      'saveEdit(${jsonEncode(_selectedPolygonId)});',
-    );
-  }
+  // ================= DELETE =================
 
   Future<void> _deletePolygon(String id) async {
     await _controller.runJavaScript('deletePolygon(${jsonEncode(id)});');
     await AppDatabase.instance.deleteConstruction(id);
     if (!mounted) return;
-    setState(() => _selectedPolygonId = null);
+    setState(() {
+      _selectedPolygonId = null;
+      _isEditingGeometry = false;
+    });
   }
 
   // ================= CREATE =================
@@ -610,7 +685,7 @@ class MapPageState extends State<MapPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Supprimer ?'),
-        content: Text('Confirmer la suppression'),
+        content: const Text('Confirmer la suppression'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -635,7 +710,7 @@ class MapPageState extends State<MapPage> {
         Positioned.fill(child: WebViewWidget(controller: _controller)),
         if (!_loaded) const Center(child: CircularProgressIndicator()),
 
-        // ✅ Bouton Annuler dessin
+        // ✅ Annuler dessin
         if (_isDrawing)
           Positioned(
             bottom: 24,

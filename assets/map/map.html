@@ -1,242 +1,343 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Leaflet SIG</title>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Leaflet SIG</title>
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Leaflet Draw -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
-  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <!-- Leaflet Draw -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
+    />
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
-  <style>
-    html, body, #map {
-      height: 100%;
-      margin: 0;
-      padding: 0;
-    }
+    <style>
+      html,
+      body,
+      #map {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
 
-    /* Tu caches la toolbar Draw, donc on gère Annuler via Flutter */
-    .leaflet-draw-toolbar,
-    .leaflet-draw-actions {
-      display: none !important;
-    }
-  </style>
-</head>
+      /* Toolbar Draw cachée: on gère via Flutter */
+      .leaflet-draw-toolbar,
+      .leaflet-draw-actions {
+        display: none !important;
+      }
+    </style>
+  </head>
 
-<body>
-<div id="map"></div>
+  <body>
+    <div id="map"></div>
 
-<script>
-  // ================= MAP =================
-  let map = L.map('map').setView([34.02, -6.84], 16);
+    <script>
+      // ================= HELPERS (DEBUG) =================
+      function post(type, payload) {
+        try {
+          if (window.MapChannel) {
+            window.MapChannel.postMessage(
+              JSON.stringify({ type, ...(payload || {}) })
+            );
+          }
+        } catch (_) {}
+      }
 
-  // ================= BASE MAP (Satellite uniquement) =================
-  L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom: 20, attribution: '© Esri' }
-  ).addTo(map);
+      window.onerror = function (message, source, lineno, colno, error) {
+        post("js_error", {
+          message: String(message),
+          source: String(source || ""),
+          line: lineno,
+          col: colno,
+        });
+      };
 
-  // ================= GEOJSON / SELECTION =================
-  let geojsonLayer = null;
-  let idToLayer = {};
-  let selectedLayer = null;
+      function safe(fn) {
+        try {
+          return fn();
+        } catch (e) {
+          post("js_error", { message: String(e) });
+        }
+      }
 
-  // DRAW / EDIT
-  let editingLayer = null;
-  let drawHandler = null;
+      // ================= MAP =================
+      let map = L.map("map").setView([34.02, -6.84], 16);
 
-  // 1) STYLE basé sur type_color envoyé par Flutter
-  function featureStyle(feature) {
-    const p = (feature && feature.properties) ? feature.properties : {};
-    const c = p.type_color || '#546E7A';
-    return {
-      color: c,
-      fillColor: c,
-      weight: 2,
-      fillOpacity: 0.45
-    };
-  }
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 20, attribution: "© Esri" }
+      ).addTo(map);
 
-  function selectedStyle(feature) {
-    const base = featureStyle(feature);
-    base.weight = 4;
-    base.fillOpacity = 0.65;
-    return base;
-  }
+      // ================= LAYERS =================
+      const editableGroup = new L.FeatureGroup();
+      map.addLayer(editableGroup);
 
-  // 2) Gestion sélection/désélection + notify Flutter
-  function clearSelection(notify = true) {
-    if (selectedLayer) {
-      selectedLayer.setStyle(featureStyle(selectedLayer.feature));
-    }
-    selectedLayer = null;
+      let idToLayer = {};
+      let selectedLayer = null;
 
-    if (notify && window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({ type: 'untap' }));
-    }
-  }
+      // DRAW
+      let drawHandler = null;
 
-  function selectLayer(layer, notify = true) {
-    if (!layer) return;
+      // EDIT (Leaflet.Draw officiel)
+      let editToolbar = null;
+      let editingId = null;
 
-    // toggle : si je reclique sur le même => désélection
-    if (selectedLayer === layer) {
-      clearSelection(notify);
-      return;
-    }
+      function isEditing() {
+        return !!editToolbar;
+      }
 
-    // reset ancien
-    if (selectedLayer) {
-      selectedLayer.setStyle(featureStyle(selectedLayer.feature));
-    }
+      function setMapInteractionsEnabled(enabled) {
+        // IMPORTANT Android: sinon conflit drag vs sommets
+        const fn = enabled ? "enable" : "disable";
+        map.dragging[fn]();
+        map.touchZoom[fn]();
+        map.doubleClickZoom[fn]();
+        map.scrollWheelZoom[fn]();
+        map.boxZoom[fn]();
+        map.keyboard[fn]();
+        if (map.tap) map.tap[fn]();
+      }
 
-    selectedLayer = layer;
-    layer.setStyle(selectedStyle(layer.feature));
-    layer.bringToFront();
+      // ================= STYLE =================
+      function featureStyle(feature) {
+        const p = feature && feature.properties ? feature.properties : {};
+        const c = p.type_color || "#546E7A";
+        return { color: c, fillColor: c, weight: 2, fillOpacity: 0.45 };
+      }
 
-    const id = layer.feature?.properties?.id;
-    if (notify && id && window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({ type: 'tap', id: String(id) }));
-    }
-  }
+      function selectedStyle(feature) {
+        const base = featureStyle(feature);
+        base.weight = 4;
+        base.fillOpacity = 0.65;
+        return base;
+      }
 
-  function onEachFeature(feature, layer) {
-    const id = feature?.properties?.id;
-    if (id) idToLayer[String(id)] = layer;
+      // ================= SELECTION =================
+      function clearSelection(notify = true) {
+        if (selectedLayer) {
+          selectedLayer.setStyle(featureStyle(selectedLayer.feature));
+        }
+        selectedLayer = null;
 
-    layer.on('click', function(e) {
-      if (e && e.originalEvent) L.DomEvent.stopPropagation(e.originalEvent);
-      selectLayer(layer, true);
-    });
-  }
+        if (notify) post("untap");
+      }
 
-  // clic sur la carte vide => deselect
-  map.on('click', function() {
-    clearSelection(true);
-  });
+      function selectLayer(layer, notify = true) {
+        if (!layer) return;
 
-  // 3) setData(...) avec style + onEachFeature
-  function setData(featureCollection) {
-    if (geojsonLayer) {
-      map.removeLayer(geojsonLayer);
-    }
+        if (selectedLayer === layer) {
+          clearSelection(notify);
+          return;
+        }
 
-    idToLayer = {};
-    selectedLayer = null;
+        if (selectedLayer) {
+          selectedLayer.setStyle(featureStyle(selectedLayer.feature));
+        }
 
-    geojsonLayer = L.geoJSON(featureCollection, {
-      style: featureStyle,
-      onEachFeature: onEachFeature
-    }).addTo(map);
+        selectedLayer = layer;
+        layer.setStyle(selectedStyle(layer.feature));
+        layer.bringToFront();
 
-    if (geojsonLayer.getLayers().length > 0) {
-      map.fitBounds(geojsonLayer.getBounds(), { padding: [20, 20] });
-    }
-  }
+        const id = layer.feature?.properties?.id;
+        if (notify && id) post("tap", { id: String(id) });
+      }
 
-  // 4) focusOn(id) => sélection sans renvoyer "tap"
-  function focusOn(id) {
-    const layer = idToLayer[String(id)];
-    if (!layer) return;
-    map.fitBounds(layer.getBounds(), { padding: [30, 30] });
-    selectLayer(layer, false);
-  }
+      // clic sur carte vide => deselect (⛔️ pas pendant édition)
+      map.on("click", function () {
+        if (isEditing()) return;
+        clearSelection(true);
+      });
 
-  // ================= DRAW =================
-  function startDraw() {
-    clearSelection(true);
+      // ================= DATA =================
+      function setData(featureCollection) {
+        safe(() => {
+          cancelDraw(false);
+          stopEdit(false);
 
-    // si un draw est déjà en cours
-    if (drawHandler) {
-      drawHandler.disable();
-      drawHandler = null;
-    }
+          editableGroup.clearLayers();
+          idToLayer = {};
+          selectedLayer = null;
 
-    drawHandler = new L.Draw.Polygon(map, {
-      shapeOptions: { color: '#2E7D32' }
-    });
+          const layer = L.geoJSON(featureCollection, {
+            style: featureStyle,
+            onEachFeature: function (feature, lyr) {
+              const id = feature?.properties?.id;
+              if (id) idToLayer[String(id)] = lyr;
 
-    drawHandler.enable();
+              lyr.on("click", function (e) {
+                if (e && e.originalEvent)
+                  L.DomEvent.stopPropagation(e.originalEvent);
+                if (isEditing()) return;
+                selectLayer(lyr, true);
+              });
+            },
+          });
 
-    // ✅ informer Flutter pour afficher bouton Annuler
-    if (window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_start' }));
-    }
-  }
+          layer.eachLayer((l) => editableGroup.addLayer(l));
 
-  // ✅ annuler le dessin en cours (appelé depuis Flutter)
-  function cancelDraw() {
-    if (drawHandler) {
-      drawHandler.disable();
-      drawHandler = null;
-    }
+          if (editableGroup.getLayers().length > 0) {
+            map.fitBounds(editableGroup.getBounds(), { padding: [20, 20] });
+          }
+        });
+      }
 
-    if (window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_cancel' }));
-    }
-  }
+      function focusOn(id) {
+        const layer = idToLayer[String(id)];
+        if (!layer) return;
+        map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+        selectLayer(layer, false);
+      }
 
-  map.on(L.Draw.Event.CREATED, e => {
-    const feature = e.layer.toGeoJSON();
+      // ================= DRAW =================
+      function startDraw() {
+        safe(() => {
+          clearSelection(true);
+          stopEdit(true);
 
-    if (window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({
-        type: 'created',
-        feature
-      }));
-      // ✅ fin du draw (pour Flutter)
-      window.MapChannel.postMessage(JSON.stringify({ type: 'draw_end' }));
-    }
+          if (drawHandler) {
+            drawHandler.disable();
+            drawHandler = null;
+          }
 
-    if (drawHandler) {
-      drawHandler.disable();
-      drawHandler = null;
-    }
-  });
+          drawHandler = new L.Draw.Polygon(map, {
+            shapeOptions: { color: "#2E7D32" },
+            allowIntersection: false,
+            showArea: true,
+          });
 
-  // ================= EDIT / DELETE =================
-  function enableEdit(id) {
-    if (!geojsonLayer) return;
+          drawHandler.enable();
+          post("draw_start");
+        });
+      }
 
-    const layer = idToLayer[String(id)];
-    if (!layer) return;
+      function cancelDraw(notify = true) {
+        if (drawHandler) {
+          drawHandler.disable();
+          drawHandler = null;
+        }
+        if (notify) post("draw_cancel");
+      }
 
-    editingLayer = layer;
-    layer.editing.enable();
-  }
+      map.on(L.Draw.Event.CREATED, (e) => {
+        safe(() => {
+          const feature = e.layer.toGeoJSON();
 
-  function saveEdit(id) {
-    if (!editingLayer) return;
-    editingLayer.editing.disable();
+          post("created", { feature });
+          post("draw_end");
 
-    const feature = editingLayer.toGeoJSON();
-    if (window.MapChannel) {
-      window.MapChannel.postMessage(JSON.stringify({
-        type: 'edited',
-        id,
-        feature
-      }));
-    }
+          if (drawHandler) {
+            drawHandler.disable();
+            drawHandler = null;
+          }
+        });
+      });
 
-    editingLayer = null;
-  }
+      // ================= EDIT SHAPE (OFFICIEL) =================
+      function enableEdit(id) {
+        safe(() => {
+          cancelDraw(false);
+          stopEdit(false);
 
-  function deletePolygon(id) {
-    if (!geojsonLayer) return;
+          const layer = idToLayer[String(id)];
+          if (!layer) {
+            post("js_error", {
+              message: "Layer introuvable pour id=" + String(id),
+            });
+            return;
+          }
 
-    const layer = idToLayer[String(id)];
-    if (!layer) return;
+          editingId = String(id);
 
-    geojsonLayer.removeLayer(layer);
-    delete idToLayer[String(id)];
+          // ✅ handler officiel Leaflet.Draw (pas de _toolbars)
+          editToolbar = new L.EditToolbar.Edit(map, {
+            featureGroup: editableGroup,
+            selectedPathOptions: {
+              maintainColor: true,
+              opacity: 0.9,
+              fillOpacity: 0.6,
+            },
+          });
 
-    if (selectedLayer === layer) clearSelection(true);
-  }
-</script>
-</body>
+          // Android: éviter conflit gestures map vs sommets
+          setMapInteractionsEnabled(false);
+
+          editToolbar.enable();
+          layer.bringToFront();
+
+          post("edit_start", { id: editingId });
+        });
+      }
+
+      function saveEdit(id) {
+        safe(() => {
+          const realId = String(id || editingId || "");
+          if (!realId) return;
+
+          if (!editToolbar) return;
+
+          editToolbar.disable();
+          setMapInteractionsEnabled(true);
+
+          const layer = idToLayer[realId];
+          if (!layer) {
+            stopEdit(false);
+            return;
+          }
+
+          const feature = layer.toGeoJSON();
+          feature.properties = feature.properties || {};
+
+          // conserver propriétés
+          if (layer.feature && layer.feature.properties) {
+            feature.properties = Object.assign(
+              {},
+              layer.feature.properties,
+              feature.properties
+            );
+          }
+          feature.properties.id = realId;
+
+          post("edited", { id: realId, feature });
+          post("edit_end");
+
+          editToolbar = null;
+          editingId = null;
+        });
+      }
+
+      function stopEdit(notify = true) {
+        if (editToolbar) {
+          editToolbar.disable();
+        }
+        editToolbar = null;
+        editingId = null;
+        setMapInteractionsEnabled(true);
+
+        if (notify) post("edit_end");
+      }
+
+      // ================= DELETE =================
+      function deletePolygon(id) {
+        safe(() => {
+          const layer = idToLayer[String(id)];
+          if (!layer) return;
+
+          if (editToolbar) stopEdit(false);
+
+          editableGroup.removeLayer(layer);
+          delete idToLayer[String(id)];
+
+          if (selectedLayer === layer) clearSelection(true);
+        });
+      }
+    </script>
+  </body>
 </html>

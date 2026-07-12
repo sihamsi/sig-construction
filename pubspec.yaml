@@ -1,5 +1,5 @@
 name: sig_construction
-description: "A new Flutter project."
+description: "Offline-first GIS app for field surveying of constructions — Leaflet map with polygon drawing, SQLite storage and role-based access."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: "none" # Remove this line if you wish to publish to pub.dev

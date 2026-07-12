@@ -42,8 +42,8 @@ assets/map/                      # Leaflet + Leaflet.Draw bundled for offline us
 ## 🚀 Getting started
 
 ```bash
-git clone https://github.com/sihamsi/Flutter_Project.git
-cd Flutter_Project
+git clone https://github.com/sihamsi/sig-construction.git
+cd sig-construction
 flutter pub get
 flutter run
 ```
